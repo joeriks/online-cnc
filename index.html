@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Spånsim</title>
+    <meta name="description" content="Simulator för hobby-CNC med GRBL: testa G-kod med olika verktyg och material innan du fräser." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <header class="topbar">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <path d="M9 3h14v4H9z" fill="currentColor" opacity=".55" />
+            <path d="M12 7h8v8l-4 3-4-3z" fill="currentColor" />
+            <path d="M15 18h2v5l-1 2-1-2z" fill="currentColor" />
+            <path d="M3 27c4-3 7 1 10-1s5-3 8-1 5 2 8 0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" />
+          </svg>
+          <div>
+            <div class="brand-name">Spånsim</div>
+            <div class="brand-sub">Simulator för hobby-CNC · GRBL 1.1</div>
+          </div>
+        </div>
+        <div class="top-actions">
+          <label class="sr-only" for="example-select">Exempelprogram</label>
+          <select id="example-select" class="select">
+            <option value="">Exempelprogram…</option>
+          </select>
+          <label class="btn btn-ghost" for="file-input">Öppna fil</label>
+          <input type="file" id="file-input" accept=".nc,.gcode,.ngc,.tap,.txt,.cnc,.gc,.nc1" hidden />
+          <button class="btn btn-primary" id="run-btn" type="button">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z" fill="currentColor" /></svg>
+            Simulera
+          </button>
+          <span class="status-chip" id="status-chip" data-state="idle">Inte körd</span>
+        </div>
+      </header>
+
+      <section class="pane editor-pane" aria-label="G-kod">
+        <div class="pane-head">
+          <h2>Program</h2>
+          <span class="pane-meta" id="editor-meta"></span>
+        </div>
+        <div class="editor" id="editor">
+          <div class="gutter" id="gutter" aria-hidden="true"><div class="gutter-inner" id="gutter-inner"></div></div>
+          <div class="code-wrap">
+            <div class="line-hl" id="line-hl" hidden></div>
+            <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off" aria-label="G-kod"></textarea>
+          </div>
+        </div>
+        <div class="editor-foot" id="editor-foot"></div>
+      </section>
+
+      <section class="stage" aria-label="Simulering">
+        <div class="viewport" id="viewport">
+          <div class="dro" id="dro" aria-live="off">
+            <div class="dro-state"><span class="state-pill" id="dro-state">Idle</span><span id="dro-line">Rad –</span></div>
+            <table class="dro-table">
+              <thead><tr><th></th><th>Arbete</th><th>Maskin</th></tr></thead>
+              <tbody>
+                <tr><th>X</th><td id="dro-wx">0.000</td><td id="dro-mx">0.000</td></tr>
+                <tr><th>Y</th><td id="dro-wy">0.000</td><td id="dro-my">0.000</td></tr>
+                <tr><th>Z</th><td id="dro-wz">0.000</td><td id="dro-mz">0.000</td></tr>
+              </tbody>
+            </table>
+            <div class="dro-row"><span>F</span><b id="dro-f">0</b><span class="unit">mm/min</span></div>
+            <div class="dro-row"><span>S</span><b id="dro-s">0</b><span class="unit">rpm</span></div>
+            <div class="dro-row"><span>T</span><b id="dro-t">–</b></div>
+            <div class="load-meter" title="Spindellast"><div class="load-fill" id="load-fill"></div><span id="load-text">Last 0 %</span></div>
+          </div>
+          <div class="view-tools" role="toolbar" aria-label="Vy">
+            <button type="button" class="chip" data-view="iso">3D</button>
+            <button type="button" class="chip" data-view="top">Ovan</button>
+            <button type="button" class="chip" data-view="front">Fram</button>
+            <button type="button" class="chip" data-view="side">Sida</button>
+            <span class="sep"></span>
+            <label class="chip toggle"><input type="checkbox" id="show-paths" checked /> Banor</label>
+            <label class="chip toggle"><input type="checkbox" id="show-rapids" checked /> G0</label>
+            <label class="chip toggle"><input type="checkbox" id="show-machine" checked /> Maskin</label>
+          </div>
+          <div class="banner" id="banner" hidden></div>
+          <div class="busy" id="busy" hidden><div class="busy-bar"><div id="busy-fill"></div></div><span>Simulerar…</span></div>
+        </div>
+        <div class="transport" id="transport">
+          <button type="button" class="icon-btn" id="rewind-btn" title="Till början (Home)" aria-label="Till början">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h2v10H3zM14 3v10L6 8z" fill="currentColor" /></svg>
+          </button>
+          <button type="button" class="icon-btn play" id="play-btn" title="Start/paus (mellanslag)" aria-label="Start">
+            <svg viewBox="0 0 16 16" aria-hidden="true" class="i-play"><path d="M4 2.5v11l9-5.5z" fill="currentColor" /></svg>
+            <svg viewBox="0 0 16 16" aria-hidden="true" class="i-pause"><path d="M4 3h3v10H4zM9 3h3v10H9z" fill="currentColor" /></svg>
+          </button>
+          <button type="button" class="icon-btn" id="end-btn" title="Till slutet (End)" aria-label="Till slutet">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11 3h2v10h-2zM2 3v10l8-5z" fill="currentColor" /></svg>
+          </button>
+          <label class="sr-only" for="speed">Hastighet</label>
+          <select id="speed" class="select select-sm">
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="5">5×</option>
+            <option value="10" selected>10×</option>
+            <option value="25">25×</option>
+            <option value="60">60×</option>
+            <option value="200">200×</option>
+            <option value="1000">1000×</option>
+          </select>
+          <input type="range" id="timeline" min="0" max="1000" value="0" step="1" aria-label="Tidslinje" />
+          <span class="time" id="time-label">0:00 / 0:00</span>
+          <label class="chip toggle small"><input type="checkbox" id="stop-at-pause" checked /> Stanna vid M0/M6</label>
+        </div>
+      </section>
+
+      <aside class="pane side-pane" aria-label="Inställningar och analys">
+        <div class="tabs" role="tablist">
+          <button role="tab" type="button" class="tab" data-tab="analysis" aria-selected="true">Analys</button>
+          <button role="tab" type="button" class="tab" data-tab="machine" aria-selected="false">Maskin</button>
+          <button role="tab" type="button" class="tab" data-tab="tools" aria-selected="false">Verktyg</button>
+          <button role="tab" type="button" class="tab" data-tab="stock" aria-selected="false">Material</button>
+        </div>
+        <div class="tab-panels">
+          <section class="tab-panel" id="tab-analysis" role="tabpanel"></section>
+          <section class="tab-panel" id="tab-machine" role="tabpanel" hidden></section>
+          <section class="tab-panel" id="tab-tools" role="tabpanel" hidden></section>
+          <section class="tab-panel" id="tab-stock" role="tabpanel" hidden></section>
+        </div>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
