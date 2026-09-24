@@ -34,6 +34,7 @@ npm run build:single # allt i en enda HTML-fil i dist-single/ (kopieras till spa
 - Skärfysik per banavsnitt: faktiskt ingrepp (ae/ap) från den borttagna volymen, spåntjocklek med spåntunning, specifik skärkraft enligt Kienzle, spindeleffekt mot tillgänglig effekt vid aktuellt varvtal, skärkraft, verktygets utböjning som konsolbalk plus ramens styvhet, och böjspänning mot brottgräns.
 - Konsekvenser: verktyget kan gå av, spindeln kan tvärstanna, och stegmotorer kan tappa steg så att resten av detaljen hamnar förskjuten.
 - Varje varning har ett konkret åtgärdsförslag med siffror (nytt skärdjup, sidsteg, matning, varvtal, utstick eller säker Z-höjd) framräknat ur samma fysikmodell.
+- Åtgärder med **Tillämpa**-knapp skriver om G-koden direkt (med ångra): byt matning, dela upp djupa varv i fler grundare, sätt varvtal, lägg in G4 efter M3, höj säkerhetshöjden, lägg in lyft före G0 genom material, eller korta verktygets utstick. Fungerar för absoluta program i mm (G90/G21).
 - Fastsättning: spännjärn, skruvar i spillkanten, skruvstäd, dubbelhäftande tejp, målartejp + CA-lim och vakuumbord jämförs för varje program. Fixturer placeras automatiskt fritt från banan, kollisioner (även G0 på för låg säkerhetshöjd) och detaljer som skärs loss utan att hållas fast upptäcks, och hållkraften jämförs med skärkraften.
 - Resultatläget visar bara den färdiga detaljen, utan maskin, spindel och banor – genomfrästa hål blir riktiga hål.
 - Varningar för tunna/tjocka spån (brännmärken, smältande plast, påkladdning i aluminium), för hög skärhastighet, G0 genom material, skaft i materialet, nedstick med icke centrumskärande verktyg, fräsning i offerskivan med mera – med konkreta förslag på ändrad F eller S.
@@ -46,6 +47,7 @@ npm run build:single # allt i en enda HTML-fil i dist-single/ (kopieras till spa
 | `src/core/planner.js` | Rörelseplanerare, trapetsprofiler |
 | `src/core/heightmap.js` | Materialmodell |
 | `src/core/physics.js` | Skärfysik och rekommenderade skärdata |
+| `src/core/rewrite.js` | Automatiska G-kodändringar för Tillämpa-knapparna |
 | `src/core/workholding.js` | Fastsättning: placering, kollisioner, lösa detaljer, hållkraft |
 | `src/core/simulate.js` | Kör allt och samlar varningar |
 | `src/core/library.js` | Maskiner, verktyg och material |

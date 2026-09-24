@@ -1,13 +1,14 @@
 // Analysis panel: summary, chart and warning list.
 
 import { el } from './dom.js';
-import { t, nf } from '../i18n.js';
+import { t, nf, fmt } from '../i18n.js';
 import { LoadChart, fmtTime } from '../view/chart.js';
 
 export class AnalysisPanel {
-  constructor(root, { onSeek, onWarning, onWorkholding }) {
+  constructor(root, { onSeek, onWarning, onWorkholding, onApply }) {
     this.root = root;
     this.onWarning = onWarning;
+    this.onApply = onApply;
     this.onWorkholding = onWorkholding;
     this.filter = 'all';
     this.canvas = el('canvas');
@@ -131,16 +132,19 @@ export class AnalysisPanel {
       const occ = w.occ && w.occ.length ? w.occ : [{ line: w.line, t: w.t }];
       const meta = el('span', { class: 'w-meta', text: occ.length > 1 ? t('an.places', { line: occ[0].line, n: occ.length }) : t('an.line', { line: occ[0].line }) });
       let idx = -1;
-      const btn = el('button', { type: 'button', class: 'warn-item', 'data-sev': w.severity, title: occ.length > 1 ? t('an.nextPlace') : '', onclick: () => {
+      const go = () => {
         idx = (idx + 1) % occ.length;
         if (occ.length > 1) meta.textContent = t('an.placeOf', { line: occ[idx].line, i: idx + 1, n: occ.length });
         this.onWarning(occ[idx]);
-      } },
+      };
+      const actions = (w.actions || []).map((a) => el('button', { type: 'button', class: 'btn btn-sm btn-apply', onclick: (e) => { e.stopPropagation(); this.onApply(a); } },
+        el('b', { text: `${t('act.apply')}:` }), ` ${actionLabel(a)}`));
+      const btn = el('div', { class: 'warn-item', role: 'button', tabindex: '0', 'data-sev': w.severity, title: occ.length > 1 ? t('an.nextPlace') : '', onclick: go, onkeydown: (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) { e.preventDefault(); go(); } } },
         el('span', { class: 'bar' }),
         el('span', { class: 'w-title', text: w.title }),
         meta,
         el('span', { class: 'w-detail', text: w.detail }),
-        w.fix ? el('span', { class: 'w-fix' }, el('b', { text: t('an.fix') }), w.fix) : null,
+        w.fix ? el('span', { class: 'w-fix' }, el('b', { text: t('an.fix') }), w.fix, actions.length ? el('span', { class: 'w-actions' }, ...actions) : null) : null,
       );
       return el('li', {}, btn);
     }));
@@ -150,5 +154,18 @@ export class AnalysisPanel {
 
   setTime(time) {
     this.chart.setTime(time);
+  }
+}
+
+export function actionLabel(a) {
+  switch (a.type) {
+    case 'feed': return t('act.feed', { from: Math.round(a.from), to: Math.round(a.to) });
+    case 'stepdown': return t('act.stepdown', { step: fmt(a.step) });
+    case 'speeds': return a.feedFrom && a.feedTo ? t('act.speedsFeed', { s: a.s, from: Math.round(a.feedFrom), to: Math.round(a.feedTo) }) : t('act.speeds', { s: a.s });
+    case 'dwell': return t('act.dwell', { p: a.p });
+    case 'insert': return t('act.insert', { text: a.text, line: a.line });
+    case 'safeZ': return t('act.safeZ', { z: a.z });
+    case 'tool': return t('act.tool', { v: a.value, n: a.tool });
+    default: return a.type;
   }
 }

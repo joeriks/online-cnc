@@ -80,22 +80,28 @@ export function simulate(code, cfg, onProgress) {
   const warn = (code, severity, line, t, value, title, detail, opts = {}) => {
     const key = opts.key || `${code}:${title}`;
     const fix = opts.fix || '';
+    const actions = opts.actions && opts.actions.length ? opts.actions : null;
     let w = warnings.get(key);
     if (!w) {
-      w = { code, severity, line, t, count: 0, worst: value, title, detail, fix, occ: [] };
+      w = { code, severity, line, t, count: 0, worst: value, title, detail, fix, actions, occ: [] };
       warnings.set(key, w);
     }
     w.count++;
     const last = w.occ[w.occ.length - 1];
     if ((!last || last.line !== line) && w.occ.length < 2000) w.occ.push({ line, t });
-    if (SEVERITY_RANK[severity] > SEVERITY_RANK[w.severity]) { w.severity = severity; w.title = title; w.detail = detail; w.fix = fix; w.worst = value; }
-    else if (severity === w.severity && value > w.worst) { w.worst = value; w.detail = detail; w.title = title; w.fix = fix; }
+    if (SEVERITY_RANK[severity] > SEVERITY_RANK[w.severity]) { w.severity = severity; w.title = title; w.detail = detail; w.fix = fix; w.actions = actions; w.worst = value; }
+    else if (severity === w.severity && value > w.worst) { w.worst = value; w.detail = detail; w.title = title; w.fix = fix; w.actions = actions; }
     const cur = lineSeverity.get(line);
     if (cur === undefined || SEVERITY_RANK[severity] > SEVERITY_RANK[cur]) lineSeverity.set(line, severity);
   };
 
   const workZ = (machineZ, wo) => gfmt(machineZ - wo[2], 2);
   // Varning via översättningsnycklar: w.<k>.title / .detail / .fix
+  // Structured actions for the "Apply" buttons, collected while a fix text is built.
+  let acts = [];
+  const takeActions = () => { const a = acts; acts = []; return a; };
+  const topZ = geo.box.z1 - geo.zero[2]; // work Z of the stock top
+
   const W = (code, severity, line, time, value, k, p = {}, opts = {}) => warn(code, severity, line, time, value,
     t(`w.${k}.title`, p), opts.detail ?? t(`w.${k}.detail`, p), { ...opts, fix: opts.fix ?? (t(`w.${k}.fix`, p) === `w.${k}.fix` ? '' : t(`w.${k}.fix`, p)) });
 
@@ -207,6 +213,7 @@ export function simulate(code, cfg, onProgress) {
             W('FIXTURE_HIT', 'crit', b.line, t0, 1, 'FIXTURE_HIT', { z: safeZ }, {
               detail: t(travel ? 'wh.i.hitRapid' : 'wh.i.hit', { part: t(`wh.part.${part}`), obj: t(`wh.obj.${fb.kind}`), line: b.line, z: safeZ }),
               fix: travel ? t('w.FIXTURE_HIT.fix', { z: safeZ }) : t('w.FIXTURE_HIT.fixCut', { obj: t(`wh.obj.${fb.kind}`) }),
+              actions: travel ? [{ type: 'safeZ', z: Number(safeZ), top: topZ }] : null,
             });
             if (!broken && (part === 'cutter' || part === 'shank')) {
               broken = true;
@@ -242,7 +249,7 @@ export function simulate(code, cfg, onProgress) {
             const d = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
             const dxy = Math.hypot(d[0], d[1]);
             if (st.shank > 0.05) W('SHANK', 'crit', b.line, t0, st.shank, 'SHANK', { len: fmt(prepTool.cutLen), d: fmt(st.shank), need: Math.ceil(prepTool.cutLen + st.shank + 1) });
-            if (b.rapid) W('RAPID_CUT', 'crit', b.line, t0, st.vol, 'RAPID_CUT', { rate: Math.round(b.rapidRate), z: workZ(geo.box.z1 + 3, b.op.wo), line: b.line });
+            if (b.rapid) W('RAPID_CUT', 'crit', b.line, t0, st.vol, 'RAPID_CUT', { rate: Math.round(b.rapidRate), z: workZ(geo.box.z1 + 3, b.op.wo), line: b.line }, { actions: [{ type: 'insert', line: b.line, text: `G0 Z${workZ(geo.box.z1 + 3, b.op.wo)}` }] });
             if (rpm < 1) {
               W('SPINDLE_OFF', 'crit', b.line, t0, 1, 'SPINDLE_OFF', { rpm: recRpm(), p: Math.ceil(m.spindle.spinUp || 1) }, { detail: t(sp.on ? 'w.SPINDLE_OFF.detailOn' : 'w.SPINDLE_OFF.detailOff') });
               broken = true;
@@ -266,7 +273,7 @@ export function simulate(code, cfg, onProgress) {
                   }
                 }
                 if (lost.length) {
-                  W('LOST_STEPS', 'crit', b.line, t0, ph.force, 'LOST_STEPS', { axes: lost.join('/'), f: Math.round(ph.force), limits: lost.map((a) => `${a}: ${m.thrust['XYZ'.indexOf(a)]} N`).join(', ') }, { fix: reduceForce(ph, b, Math.min(...lost.map((a) => (0.7 * m.thrust['XYZ'.indexOf(a)]) / ph.force))) });
+                  W('LOST_STEPS', 'crit', b.line, t0, ph.force, 'LOST_STEPS', { axes: lost.join('/'), f: Math.round(ph.force), limits: lost.map((a) => `${a}: ${m.thrust['XYZ'.indexOf(a)]} N`).join(', ') }, { fix: reduceForce(ph, b, Math.min(...lost.map((a) => (0.7 * m.thrust['XYZ'.indexOf(a)]) / ph.force))), actions: takeActions() });
                   events.push({ t: t1, type: 'lost', line: b.line, text: t('ev.lost', { axes: lost.join('/'), line: b.line }) });
                 }
               }
@@ -291,9 +298,9 @@ export function simulate(code, cfg, onProgress) {
         } else if (op.rpm <= 0) target = 0;
         else {
           target = Math.min(s.maxRpm, Math.max(s.minRpm || 0, op.rpm));
-          if (op.rpm > s.maxRpm) W('S_MAX', 'info', op.line, tt, op.rpm, 'S_MAX', { s: op.rpm, max: s.maxRpm, k: fmt(s.maxRpm / op.rpm, 2) });
+          if (op.rpm > s.maxRpm) W('S_MAX', 'info', op.line, tt, op.rpm, 'S_MAX', { s: op.rpm, max: s.maxRpm, k: fmt(s.maxRpm / op.rpm, 2) }, { actions: [{ type: 'speeds', s: s.maxRpm }] });
         }
-        if (op.rpm <= 0 && s.type !== 'router') W('S_ZERO', 'warn', op.line, tt, 0, 'S_ZERO', { rpm: recRpm(), line: op.line });
+        if (op.rpm <= 0 && s.type !== 'router') W('S_ZERO', 'warn', op.line, tt, 0, 'S_ZERO', { rpm: recRpm(), line: op.line }, { actions: [{ type: 'speeds', s: recRpm() }] });
       }
       const cur = rpmAt(tt);
       sp.from = cur; sp.to = target; sp.t = tt; sp.on = on;
@@ -304,7 +311,7 @@ export function simulate(code, cfg, onProgress) {
     } else if (it.type === 'tool') {
       toolChanges++;
       const def = cfg.tools[op.tool];
-      if (sp.on && rpmAt(it.t0) > 0) W('TC_SPINDLE', 'warn', op.line, it.t0, 0, 'TC_SPINDLE', { n: op.tool });
+      if (sp.on && rpmAt(it.t0) > 0) W('TC_SPINDLE', 'warn', op.line, it.t0, 0, 'TC_SPINDLE', { n: op.tool }, { actions: [{ type: 'insert', line: op.line, text: 'M5' }] });
       if (!def) {
         W('NO_TOOL', 'crit', op.line, it.t0, 0, 'NO_TOOL', { n: op.tool });
       } else {
@@ -332,15 +339,18 @@ export function simulate(code, cfg, onProgress) {
     const actualFeed = acc.feed / acc.w;
     const maxFeed = Math.min(b.rapidRate, m.maxRate[0], m.maxRate[1]);
     let advice;
+    let advAct = null;
     if (!b.rapid && actualFeed < 0.7 * b.op.feed) {
       advice = t('adv.accel', { v: Math.round(actualFeed), f: Math.round(b.op.feed), a: m.accel[0] });
     } else if (suggestFeed > maxFeed && m.spindle.type !== 'router') {
       const s = Math.max(m.spindle.minRpm || 0, Math.round(maxFeed / (fzTarget / Math.max(thin, 0.05)) / z / 500) * 500);
       advice = t('adv.maxS', { max: Math.round(maxFeed), s });
+      advAct = { type: 'speeds', s };
     } else if (suggestFeed > maxFeed) {
       advice = t('adv.maxDial', { max: Math.round(maxFeed) });
     } else {
       advice = t(hex < fzMin ? 'adv.feedLow' : 'adv.feedHigh', { f: suggestFeed });
+      if (b.op.feed) advAct = { type: 'feed', from: b.op.feed, to: suggestFeed };
     }
     const line = b.line;
     const t0 = acc.t;
@@ -350,17 +360,17 @@ export function simulate(code, cfg, onProgress) {
     const plungeMax = Math.round((fzMax * 0.8 * z * rpm) / 10) * 10;
     if (plunge) {
       // Vid nedstick accepteras tunnare spån, men för långsamt nedstick gnider ändå.
-      if (hex < fzMin * 0.25) W('PLUNGE_SLOW', 'info', line, t0, fzMin / hex, 'PLUNGE_SLOW', { h: fmt(hex, 3), f: Math.min(plungeFeed, m.maxRate[2]) });
-      else if (hex > fzMax) W('PLUNGE_FAST', 'warn', line, t0, hex / fzMax, 'PLUNGE_FAST', { h: fmt(hex, 3), max: fmt(fzMax, 3), f: plungeMax });
+      if (hex < fzMin * 0.25) W('PLUNGE_SLOW', 'info', line, t0, fzMin / hex, 'PLUNGE_SLOW', { h: fmt(hex, 3), f: Math.min(plungeFeed, m.maxRate[2]) }, { actions: [{ type: 'feed', from: b.op.feed, to: Math.min(plungeFeed, m.maxRate[2]) }] });
+      else if (hex > fzMax) W('PLUNGE_FAST', 'warn', line, t0, hex / fzMax, 'PLUNGE_FAST', { h: fmt(hex, 3), max: fmt(fzMax, 3), f: plungeMax }, { actions: [{ type: 'feed', from: b.op.feed, to: plungeMax }] });
       return;
     }
     if (hex < fzMin * 0.6) {
-      if (material.melt) W('MELT', 'warn', line, t0, fzMin / hex, 'MELT', { range }, { fix: advice });
-      else if (material.group === 'metal') W('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'CHIP_LOW_METAL', { range }, { fix: advice });
-      else W('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'CHIP_LOW', { range }, { fix: advice });
+      if (material.melt) W('MELT', 'warn', line, t0, fzMin / hex, 'MELT', { range }, { fix: advice, actions: advAct ? [advAct] : null });
+      else if (material.group === 'metal') W('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'CHIP_LOW_METAL', { range }, { fix: advice, actions: advAct ? [advAct] : null });
+      else W('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'CHIP_LOW', { range }, { fix: advice, actions: advAct ? [advAct] : null });
     } else if (hex > fzMax * 1.4) {
       const sev = hex > fzMax * 2.5 ? 'crit' : 'warn';
-      W('CHIP_HIGH', sev, line, t0, hex / fzMax, 'CHIP_HIGH', { range }, { fix: advice });
+      W('CHIP_HIGH', sev, line, t0, hex / fzMax, 'CHIP_HIGH', { range }, { fix: advice, actions: advAct ? [advAct] : null });
     }
   }
 
@@ -377,15 +387,24 @@ export function simulate(code, cfg, onProgress) {
     const opts = [];
     const feed = b.op.feed || 0;
     if (ph.plunge) {
-      opts.push(t('fix.plungeFeed', { f: round10(feed * Math.pow(r, 1 / (1 - material.mc))), now: Math.round(feed) }));
+      const fNew = round10(feed * Math.pow(r, 1 / (1 - material.mc)));
+      opts.push(t('fix.plungeFeed', { f: fNew, now: Math.round(feed) }));
+      if (feed > 0) acts.push({ type: 'feed', from: feed, to: fNew });
       opts.push(t('fix.ramp'));
     } else {
-      if (ph.ap > 0.1) opts.push(t('fix.ap', { v: fmt(floorStep(ph.ap * r, 0.05)), now: fmt(ph.ap) }));
+      if (ph.ap > 0.1) {
+        const step = floorStep(ph.ap * r, 0.05);
+        opts.push(t('fix.ap', { v: fmt(step), now: fmt(ph.ap) }));
+        acts.push({ type: 'stepdown', step, top: topZ });
+      }
       if (ph.ae >= 0.9 * ph.Deff) opts.push(t('fix.slot', { v: fmt(floorStep(ph.Deff * Math.min(0.4, r), 0.05)) }));
       else if (ph.ae * r >= 0.05 * ph.Deff) opts.push(t('fix.ae', { v: fmt(floorStep(ph.ae * r, 0.05)), now: fmt(ph.ae) }));
       const fr = Math.pow(r, 1 / (1 - material.mc));
       const [fzMin] = chipLoadRange(material, ph.Deff);
-      if (feed > 0 && ph.hex * fr >= fzMin * 0.6) opts.push(t('fix.feed', { f: round10(feed * fr), now: Math.round(feed) }));
+      if (feed > 0 && ph.hex * fr >= fzMin * 0.6) {
+        opts.push(t('fix.feed', { f: round10(feed * fr), now: Math.round(feed) }));
+        acts.push({ type: 'feed', from: feed, to: round10(feed * fr) });
+      }
     }
     let text = opts.length ? cap(opts.join(t('fix.or'))) + '.' : '';
     if (extra) text += ` ${extra}`;
@@ -397,8 +416,8 @@ export function simulate(code, cfg, onProgress) {
     const L = tool.stickout;
     const Lnew = Math.floor(L * Math.pow(Math.min(1, rTool), 1 / power));
     const minL = Math.ceil((tool.fluteLen || 5) + 2);
-    if (Lnew < L - 1 && Lnew >= minL) return t('fix.stickout', { n: Lnew, now: L });
-    if (Lnew < minL && L > minL + 1) return t('fix.stickoutMin', { n: minL });
+    if (Lnew < L - 1 && Lnew >= minL) { acts.push({ type: 'tool', tool: toolNum, field: 'stickout', value: Lnew }); return t('fix.stickout', { n: Lnew, now: L }); }
+    if (Lnew < minL && L > minL + 1) { acts.push({ type: 'tool', tool: toolNum, field: 'stickout', value: minL }); return t('fix.stickoutMin', { n: minL }); }
     return '';
   }
 
@@ -422,7 +441,9 @@ export function simulate(code, cfg, onProgress) {
     const s = m.spindle;
     if (s.type !== 'router' && rpm < s.maxRpm * 0.9) {
       const rpmNew = Math.min(s.maxRpm, Math.round(rpm / Math.max(r, 0.3) / 500) * 500);
-      extra = t('fix.rpmPower', { s: rpmNew, f: round10((b.op.feed || 0) * (rpmNew / rpm)), p: Math.round((rpmNew / rpm) * 100) });
+      const fNew = round10((b.op.feed || 0) * (rpmNew / rpm));
+      extra = t('fix.rpmPower', { s: rpmNew, f: fNew, p: Math.round((rpmNew / rpm) * 100) });
+      acts.push({ type: 'speeds', s: rpmNew, feedFrom: b.op.feed, feedTo: fNew });
     }
     return reduceForce(ph, b, r, extra);
   }
@@ -431,7 +452,7 @@ export function simulate(code, cfg, onProgress) {
     const line = b.line;
     const vcMax = material.vcMax[tool.material] || material.vcMax.carbide;
     if (rpm < sp.to * 0.9 && sp.on) {
-      W('SPINUP', 'warn', line, t0, sp.to - rpm, 'SPINUP', { rpm: Math.round(rpm), target: Math.round(sp.to), p: Math.ceil(m.spindle.spinUp || 2) });
+      W('SPINUP', 'warn', line, t0, sp.to - rpm, 'SPINUP', { rpm: Math.round(rpm), target: Math.round(sp.to), p: Math.ceil(m.spindle.spinUp || 2) }, { actions: [{ type: 'dwell', p: Math.ceil(m.spindle.spinUp || 2) }] });
     }
     // Spåntjockleken bedöms som volymviktat medel över blocket (se evalChip),
     // och bara där verktyget har ett rejält ingrepp – inte vid in- och utgång.
@@ -440,25 +461,25 @@ export function simulate(code, cfg, onProgress) {
       chipAcc.w += w; chipAcc.hex += ph.hex * w; chipAcc.fz += ph.fz * w; chipAcc.deff += ph.Deff * w; chipAcc.rpm += rpm * w; chipAcc.feed += (ph.fz * Math.max(1, tool.flutes) * rpm) * w; if (ph.plunge) chipAcc.plunge += w;
       if (chipAcc.t < 0) chipAcc.t = t0;
     }
-    if (ph.vc > vcMax) { const k = vcMax / ph.vc; W('VC_HIGH', 'warn', line, t0, ph.vc, 'VC_HIGH', { vc: Math.round(ph.vc), max: vcMax, tm: t(`tm.${tool.material}`), mat: loc(material).toLowerCase(), s: Math.round((rpm * k) / 500) * 500, f: round10(b.op.feed * k) }); }
+    if (ph.vc > vcMax) { const k = vcMax / ph.vc; W('VC_HIGH', 'warn', line, t0, ph.vc, 'VC_HIGH', { vc: Math.round(ph.vc), max: vcMax, tm: t(`tm.${tool.material}`), mat: loc(material).toLowerCase(), s: Math.round((rpm * k) / 500) * 500, f: round10(b.op.feed * k) }, { actions: [{ type: 'speeds', s: Math.round((rpm * k) / 500) * 500, feedFrom: b.op.feed, feedTo: round10(b.op.feed * k) }] }); }
     if (ph.load > 0.85) {
       const sev = ph.load > 1.2 ? 'crit' : 'warn';
-      W('POWER', sev, line, t0, ph.load, ph.load > 1 ? 'POWER_OVER' : 'POWER_NEAR', { p: Math.round(ph.power), avail: Math.round(ph.avail), rpm: Math.round(rpm), load: Math.round(ph.load * 100) }, { detail: t('w.POWER.detail', { p: Math.round(ph.power), avail: Math.round(ph.avail), rpm: Math.round(rpm), load: Math.round(ph.load * 100) }), fix: powerFix(ph, b, rpm) });
+      W('POWER', sev, line, t0, ph.load, ph.load > 1 ? 'POWER_OVER' : 'POWER_NEAR', { p: Math.round(ph.power), avail: Math.round(ph.avail), rpm: Math.round(rpm), load: Math.round(ph.load * 100) }, { detail: t('w.POWER.detail', { p: Math.round(ph.power), avail: Math.round(ph.avail), rpm: Math.round(rpm), load: Math.round(ph.load * 100) }), fix: powerFix(ph, b, rpm), actions: takeActions() });
     }
     if (ph.load > 2.2) {
       broken = true;
-      W('STALL', 'crit', line, t0, ph.load, 'STALL', { load: Math.round(ph.load * 100) }, { fix: powerFix(ph, b, rpm) });
+      W('STALL', 'crit', line, t0, ph.load, 'STALL', { load: Math.round(ph.load * 100) }, { fix: powerFix(ph, b, rpm), actions: takeActions() });
       return;
     }
     if (ph.deflection > 0.08) {
       const sev = ph.deflection > 0.2 ? 'crit' : 'warn';
-      W('DEFLECT', sev, line, t0, ph.deflection, 'DEFLECT', { d: fmt(ph.deflection, 3), dt: fmt(ph.toolDefl, 3), dm: fmt(ph.machineDefl, 3), f: Math.round(ph.force) }, { fix: deflectFix(ph, b) });
+      W('DEFLECT', sev, line, t0, ph.deflection, 'DEFLECT', { d: fmt(ph.deflection, 3), dt: fmt(ph.toolDefl, 3), dm: fmt(ph.machineDefl, 3), f: Math.round(ph.force) }, { fix: deflectFix(ph, b), actions: takeActions() });
     }
     if (ph.stressRatio >= 1) {
       broken = true;
-      W('BREAK', 'crit', line, t0, ph.stressRatio, 'BREAK', { p: Math.round(ph.stressRatio * 100), f: Math.round(ph.force), l: tool.stickout }, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)) });
+      W('BREAK', 'crit', line, t0, ph.stressRatio, 'BREAK', { p: Math.round(ph.stressRatio * 100), f: Math.round(ph.force), l: tool.stickout }, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)), actions: takeActions() });
     } else if (ph.stressRatio > 0.65) {
-      W('BREAK_RISK', 'warn', line, t0, ph.stressRatio, 'BREAK_RISK', { p: Math.round(ph.stressRatio * 100), f: Math.round(ph.force) }, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)) });
+      W('BREAK_RISK', 'warn', line, t0, ph.stressRatio, 'BREAK_RISK', { p: Math.round(ph.stressRatio * 100), f: Math.round(ph.force) }, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)), actions: takeActions() });
     }
     if (ph.plunge && !tool.centerCutting) W('PLUNGE_NC', 'crit', line, t0, 1, 'PLUNGE_NC');
   }
@@ -499,7 +520,7 @@ export function simulate(code, cfg, onProgress) {
     if (is.key === 'hit' || is.key === 'hitRapid') {
       if (wh.method === 'auto') {
         const pp = { ...is.p, part: t(`wh.part.${is.p.part}`), obj: t(`wh.obj.${is.p.obj}`) };
-        W('FIXTURE_HIT', 'crit', is.line, is.t, 1, 'FIXTURE_HIT', { z: is.p.z }, { detail: t(`wh.i.${is.key}`, pp), fix: is.key === 'hitRapid' ? t('w.FIXTURE_HIT.fix', { z: is.p.z }) : t('w.FIXTURE_HIT.fixCut', { obj: pp.obj }) });
+        W('FIXTURE_HIT', 'crit', is.line, is.t, 1, 'FIXTURE_HIT', { z: is.p.z }, { detail: t(`wh.i.${is.key}`, pp), fix: is.key === 'hitRapid' ? t('w.FIXTURE_HIT.fix', { z: is.p.z }) : t('w.FIXTURE_HIT.fixCut', { obj: pp.obj }), actions: is.key === 'hitRapid' ? [{ type: 'safeZ', z: Number(is.p.z), top: topZ }] : null });
       }
     } else if (is.key === 'loose' || is.key === 'looseWeak') {
       W('LOOSE', is.sev, is.line, lineTime(is.line), is.piece.area, 'LOOSE', {}, { detail: text });

@@ -639,6 +639,10 @@ details.more[open] > summary { margin-bottom: 8px; }
   display: grid;
   gap: 1px;
 }
+.warn-item .w-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.btn-apply { height: auto; min-height: 28px; padding: 3px 10px; white-space: normal; text-align: left; border-color: var(--accent); background: var(--raised); color: var(--ink); font-size: 12px; }
+.btn-apply b { font: 600 12px var(--font-body); letter-spacing: 0; text-transform: none; color: var(--accent); }
+.editor-foot .undo { margin-left: 8px; }
 .warn-item .w-fix b {
   font-family: var(--font-display);
   font-weight: 700;

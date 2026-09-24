@@ -8,7 +8,8 @@ import { Viewer } from './view/scene.js';
 import { fmtTime } from './view/chart.js';
 import { Playback } from './playback.js';
 import { Editor } from './ui/editor.js';
-import { AnalysisPanel } from './ui/analysis.js';
+import { AnalysisPanel, actionLabel } from './ui/analysis.js';
+import { applyAction } from './core/rewrite.js';
 import { renderMachine, renderTools, renderStock, fitStock } from './ui/settings.js';
 import { defaultWorkholding } from './core/workholding.js';
 
@@ -104,6 +105,7 @@ const analysis = new AnalysisPanel($('tab-analysis'), {
     renderStock($('tab-stock'), state, () => { settingsChanged(); renderTools($('tab-tools'), state, ui, settingsChanged); });
     run();
   },
+  onApply: (a) => applyFix(a),
   onWarning: (w) => {
     syncEvents(w.t);
     seek(Math.max(0, w.t));
@@ -276,6 +278,10 @@ function applyResult(r) {
     seek(hadResult ? Math.min(prevT, s.totalTime) : s.totalTime);
   }
   syncEvents(playT);
+  if (pendingFoot) {
+    showFoot(`${pendingFoot.text} ${foot.textContent}`, false, pendingFoot.undo);
+    pendingFoot = null;
+  }
   // Tabbens räknare
   const tab = document.querySelector('.tab[data-tab="analysis"]');
   tab.replaceChildren(t('tab.analysis'));
@@ -461,6 +467,56 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
   readPalette();
   analysis.chart.draw();
 });
+
+// ---------- Apply suggested fixes ----------
+
+let undoStack = [];
+function applyFix(a) {
+  const what = actionLabel(a);
+  const snapshot = { code: state.code, tools: JSON.parse(JSON.stringify(state.tools)) };
+  let changed = 1;
+  if (a.type === 'tool') {
+    const tl = state.tools[a.tool];
+    if (!tl) return showFoot(t('act.err.unknown'), true);
+    tl[a.field] = a.value;
+    renderTools($('tab-tools'), state, ui, settingsChanged);
+  } else {
+    const r = applyAction(state.code, a);
+    if (r.error) return showFoot(t(`act.err.${r.error}`, { from: Math.round(a.from || 0) }), true);
+    state.code = r.code;
+    editor.value = r.code;
+    updateEditorMeta();
+    changed = r.changed;
+  }
+  undoStack.push(snapshot);
+  persist();
+  pendingFoot = { text: t('act.done', { what, n: changed }), undo: true };
+  run();
+}
+
+function undoFix() {
+  const s = undoStack.pop();
+  if (!s) return;
+  state.code = s.code;
+  state.tools = s.tools;
+  editor.value = s.code;
+  updateEditorMeta();
+  renderTools($('tab-tools'), state, ui, settingsChanged);
+  persist();
+  pendingFoot = { text: t('act.undone'), undo: false };
+  run();
+}
+
+let pendingFoot = null;
+function showFoot(text, isError = false, undo = false) {
+  const foot = $('editor-foot');
+  foot.replaceChildren(Object.assign(document.createElement('span'), { className: isError ? 'err' : '', textContent: text }));
+  if (undo && undoStack.length) {
+    const b = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm undo', textContent: t('act.undo') });
+    b.addEventListener('click', undoFix);
+    foot.append(b);
+  }
+}
 
 // ---------- Language ----------
 
