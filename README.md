@@ -2,12 +2,16 @@
 
 Simulator för hobby-CNC med GRBL. Klistra in eller öppna ett G-kodsprogram, välj maskin, verktyg och material, och se hur fräsningen går – innan du kör på riktigt.
 
+**Snabbast:** öppna `spansim.html` direkt i webbläsaren (dubbelklicka). Filen innehåller allt – ingen server eller installation behövs, och den fungerar offline (bara typsnitten hämtas från nätet).
+
+Utveckling:
+
 ```
 npm install
 npm run dev          # utvecklingsserver
 npm test             # enhetstester (node:test)
 npm run build        # statisk sajt i dist/
-npm run build:single # allt i en enda HTML-fil i dist-single/
+npm run build:single # allt i en enda HTML-fil i dist-single/ (kopieras till spansim.html)
 ```
 
 ## Vad som simuleras
