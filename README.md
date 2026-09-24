@@ -2,7 +2,9 @@
 
 Simulator för hobby-CNC med GRBL. Klistra in eller öppna ett G-kodsprogram, välj maskin, verktyg och material, och se hur fräsningen går – innan du kör på riktigt.
 
-**Snabbast:** öppna `spansim.html` direkt i webbläsaren (dubbelklicka). Filen innehåller allt – ingen server eller installation behövs, och den fungerar offline (bara typsnitten hämtas från nätet).
+**Online:** https://joeriks.github.io/online-cnc/
+
+**Snabbast offline:** öppna `spansim.html` direkt i webbläsaren (dubbelklicka). Filen innehåller allt – ingen server eller installation behövs, och den fungerar offline (bara typsnitten hämtas från nätet).
 
 Utveckling:
 
