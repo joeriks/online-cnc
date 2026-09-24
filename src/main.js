@@ -10,6 +10,7 @@ import { Playback } from './playback.js';
 import { Editor } from './ui/editor.js';
 import { AnalysisPanel } from './ui/analysis.js';
 import { renderMachine, renderTools, renderStock, fitStock } from './ui/settings.js';
+import { defaultWorkholding } from './core/workholding.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'spansim-state-v1';
@@ -34,6 +35,7 @@ function exampleState(ex, machine) {
     detail: 'normal',
     lostSteps: true,
     spoilboard: 12,
+    workholding: defaultWorkholding(),
   };
   fitStock(state);
   return state;
@@ -44,7 +46,10 @@ function loadState() {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const s = JSON.parse(raw);
-      if (s && s.code !== undefined && s.machine && s.tools) return s;
+      if (s && s.code !== undefined && s.machine && s.tools) {
+        if (!s.workholding) s.workholding = defaultWorkholding();
+        return s;
+      }
     }
   } catch { /* lagring kan vara blockerad */ }
   return exampleState(EXAMPLES[0], MACHINES[0]);
@@ -70,6 +75,7 @@ function buildCfg() {
     detail: state.detail,
     lostSteps: state.lostSteps,
     spoilboard: state.spoilboard,
+    workholding: state.workholding,
   };
 }
 
@@ -92,6 +98,12 @@ editor.value = state.code;
 const ui = { selectedTool: state.initialTool };
 const analysis = new AnalysisPanel($('tab-analysis'), {
   onSeek: (t) => { syncEvents(t); seek(t); },
+  onWorkholding: (id) => {
+    state.workholding.method = id;
+    persist();
+    renderStock($('tab-stock'), state, () => { settingsChanged(); renderTools($('tab-tools'), state, ui, settingsChanged); });
+    run();
+  },
   onWarning: (w) => {
     syncEvents(w.t);
     seek(Math.max(0, w.t));
@@ -131,7 +143,9 @@ exSel.addEventListener('change', () => {
   const ex = EXAMPLES.find((e) => e.id === exSel.value);
   exSel.value = '';
   if (!ex) return;
+  const prevWh = state.workholding;
   state = exampleState(ex, state.machine);
+  if (prevWh) state.workholding = prevWh;
   ui.selectedTool = state.initialTool;
   editor.value = state.code;
   updateEditorMeta();
@@ -235,6 +249,7 @@ function applyResult(r) {
   viewer.buildMachine(state.machine, r.geometry);
   viewer.buildStock(playback.hm, material);
   viewer.buildPaths(r.chunks);
+  viewer.buildFixtures(r.workholding ? r.workholding.fixtures : []);
   lastToolKey = '';
   if (resetCamera || !hadResult) {
     const b = r.geometry.box;

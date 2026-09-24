@@ -5,9 +5,10 @@ import { t, nf } from '../i18n.js';
 import { LoadChart, fmtTime } from '../view/chart.js';
 
 export class AnalysisPanel {
-  constructor(root, { onSeek, onWarning }) {
+  constructor(root, { onSeek, onWarning, onWorkholding }) {
     this.root = root;
     this.onWarning = onWarning;
+    this.onWorkholding = onWorkholding;
     this.filter = 'all';
     this.canvas = el('canvas');
     this.chart = new LoadChart(this.canvas, onSeek);
@@ -24,11 +25,13 @@ export class AnalysisPanel {
     this.list = el('ul', { class: 'warn-list' });
     this.events = el('ul', { class: 'warn-list' });
     this.notes = el('div', { class: 'section' });
+    this.wh = el('div', { class: 'wh-list' });
     this.root.replaceChildren(
       this.verdict,
       this.stats,
       el('div', { class: 'section' }, el('div', { class: 'section-head' }, el('h3', { text: t('an.chart') }), el('span', { class: 'hint', text: t('an.chartHint') })), this.chartBox),
       el('div', { class: 'section' }, el('div', { class: 'section-head' }, el('h3', { text: t('an.warnings') }), this.filters), this.list),
+      el('div', { class: 'section' }, el('h3', { text: t('wh.options') }), this.wh),
       el('div', { class: 'section' }, el('h3', { text: t('an.events') }), this.events),
       this.notes,
     );
@@ -69,6 +72,7 @@ export class AnalysisPanel {
     );
 
     this.chart.setData(r);
+    this.renderWorkholding();
     this.renderFilters();
     this.renderList();
 
@@ -84,6 +88,28 @@ export class AnalysisPanel {
     if (r.notes.length) {
       this.notes.append(el('h3', { text: t('an.notes') }), ...r.notes.slice(0, 20).map((n) => el('p', { class: 'hint', text: t('an.noteLine', { line: n.line, text: n.text }) })));
     }
+  }
+
+  renderWorkholding() {
+    const w = this.r.workholding;
+    if (!w) { this.wh.replaceChildren(); return; }
+    const issueText = (i) => t(`wh.i.${i.key}`, { ...(i.p || {}), part: i.p && i.p.part ? t(`wh.part.${i.p.part}`) : '', obj: i.p && i.p.obj ? t(`wh.obj.${i.p.obj}`) : '' });
+    this.wh.replaceChildren(...w.options.map((o) => {
+      const used = o.id === w.selected;
+      const action = used
+        ? el('span', { class: 'wh-used', text: w.auto ? t('wh.autoPicked') : t('wh.inUse') })
+        : o.rating === 'na' ? null : el('button', { type: 'button', class: 'btn btn-sm', text: t('wh.use'), onclick: () => this.onWorkholding(o.id) });
+      return el('div', { class: 'wh-card', 'data-rating': o.rating, 'data-used': String(used) },
+        el('div', { class: 'wh-head' },
+          el('span', { class: 'wh-name', text: t(`wh.name.${o.id}`) }),
+          el('span', { class: 'wh-rating', text: t(`wh.rating.${o.rating}`) }),
+          action,
+        ),
+        el('p', { class: 'wh-desc', text: t(`wh.desc.${o.id}`) }),
+        o.rating !== 'na' ? el('p', { class: 'wh-hold', text: t('wh.hold', { hold: nf(o.hold), f: nf(w.maxForce, 1) }) }) : null,
+        o.issues.length ? el('ul', { class: 'wh-issues' }, ...o.issues.map((i) => el('li', { 'data-sev': i.sev, text: issueText(i) }))) : null,
+      );
+    }));
   }
 
   renderFilters() {

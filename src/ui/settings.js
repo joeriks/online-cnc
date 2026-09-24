@@ -2,6 +2,7 @@
 
 import { MACHINES, TOOLS, MATERIALS, SPINDLE_TYPES, TOOL_TYPES, TOOL_MATERIALS, findById, cloneTool, loc, toolName } from '../core/library.js';
 import { t, nf } from '../i18n.js';
+import { WORKHOLDING, defaultWorkholding } from '../core/workholding.js';
 import { recommend, chipLoadRange } from '../core/physics.js';
 import { makeProfile, cuttingLength, describeTool } from '../core/tool.js';
 import { el, numField, textField, selectField, checkField, axisField, section } from './dom.js';
@@ -236,11 +237,34 @@ export function renderStock(root, state, changed) {
         selectField(t('s.zeroZ'), [['top', t('s.top')], ['bottom', t('s.bottom')]], state.zero.z, (v) => { state.zero.z = v; changed(); }, { id: 'zero-z' }),
       ),
     ),
+    renderWorkholding(state, changed, rerender),
     section(t('s.sim'),
       el('div', { class: 'fields' },
         selectField(t('s.detail'), [['low', t('s.low')], ['normal', t('s.normal')], ['high', t('s.high')]], state.detail, (v) => { state.detail = v; changed(); }, { id: 'detail' }),
       ),
       checkField(t('s.lost'), state.lostSteps, (v) => { state.lostSteps = v; changed(); }, { id: 'lost-steps' }),
     ),
+  );
+}
+
+function renderWorkholding(state, changed, rerender) {
+  if (!state.workholding) state.workholding = defaultWorkholding();
+  const wh = state.workholding;
+  const opts = [['auto', t('wh.auto')], ...WORKHOLDING.map((id) => [id, t(`wh.name.${id}`)])];
+  const fields = el('div', { class: 'fields' });
+  if (wh.method === 'clamps' || wh.method === 'auto') {
+    fields.append(selectField(t('wh.clampsN'), [[2, '2'], [4, '4']], wh.clamps, (v) => { wh.clamps = Number(v); changed(); }, { id: 'wh-clamps' }));
+  }
+  if (wh.method === 'vise' || wh.method === 'auto') {
+    fields.append(
+      numField(t('wh.viseOpening'), wh.viseOpening, (v) => { wh.viseOpening = Math.max(10, v); changed(); }, { unit: 'mm', step: 5, id: 'wh-vise' }),
+      numField(t('wh.jawHeight'), wh.jawHeight, (v) => { wh.jawHeight = Math.max(3, v); changed(); }, { unit: 'mm', step: 1, id: 'wh-jaw' }),
+    );
+  }
+  return section(t('wh.section'),
+    selectField(t('wh.method'), opts, wh.method, (v) => { wh.method = v; changed(); rerender(); }, { id: 'wh-method' }),
+    wh.method !== 'auto' ? el('p', { class: 'note', text: t(`wh.desc.${wh.method}`) }) : null,
+    fields,
+    el('p', { class: 'hint', text: t('wh.hint') }),
   );
 }

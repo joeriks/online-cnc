@@ -5,6 +5,7 @@ import { plan, timeAtDistance } from './planner.js';
 import { HeightMap, prepareTool, newStampResult, chooseResolution } from './heightmap.js';
 import { cutPhysics, chipLoadRange, recommend } from './physics.js';
 import { loc, toolName } from './library.js';
+import { samplePath, planFixtures, findPieces, evaluate, toolEnvelope, envelopeHit, defaultWorkholding } from './workholding.js';
 import { t, fmt, gfmt } from '../i18n.js';
 
 export { fmt };
@@ -48,6 +49,13 @@ export function simulate(code, cfg, onProgress) {
   const res = cfg.resolution || chooseResolution(cfg.stock.sx, cfg.stock.sy, cfg.detail, minD);
   const hmParams = { x0: geo.box.x0, y0: geo.box.y0, sx: cfg.stock.sx, sy: cfg.stock.sy, zBottom: geo.box.z0, zTop: geo.box.z1, res };
   const hm = new HeightMap(hmParams);
+
+  // Workholding: fixtures are placed clear of the commanded path before the run.
+  const wh = { ...defaultWorkholding(), ...(cfg.workholding || {}) };
+  const pathPts = samplePath(planned, cfg);
+  const fixtures = planFixtures(pathPts, geo.box, wh);
+  const fixedBoxes = wh.method !== 'auto' && fixtures[wh.method] ? fixtures[wh.method].boxes.filter((b) => b.solid) : [];
+  const hitBoxes = new Set();
 
   // Verktyg som används, indexerade för uppspelningen
   const toolList = [];
@@ -95,6 +103,7 @@ export function simulate(code, cfg, onProgress) {
   let toolNum = cfg.initialTool;
   let tool = cfg.tools[toolNum];
   let prepTool = tool ? prepareTool(tool) : null;
+  let envelope = tool ? toolEnvelope(tool, m.spindle.type) : null;
   let broken = false;
   const offset = [0, 0, 0]; // förlorade steg (verklig − kommenderad)
   const sp = { on: false, from: 0, to: 0, t: 0, dur: 0, programmed: 0 };
@@ -180,6 +189,32 @@ export function simulate(code, cfg, onProgress) {
           for (let i = 0; i < 3; i++) offset[i] += clamped[i] - B[i];
           W('TRAVEL', 'crit', b.line, t0, 1, 'TRAVEL', { where: axisOutside(B, travelMin, travelMax), x: m.travel[0], y: m.travel[1], z: m.travel[2] });
           B = clamped;
+        }
+
+        // Collision between tool/spindle and the chosen clamps, screws or vise jaws
+        if (envelope && fixedBoxes.length) {
+          for (const fb of fixedBoxes) {
+            if (hitBoxes.has(fb)) continue;
+            let part = null;
+            for (const f of [0, 0.5, 1]) {
+              part = envelopeHit(envelope, A[0] + (B[0] - A[0]) * f, A[1] + (B[1] - A[1]) * f, A[2] + (B[2] - A[2]) * f, fb);
+              if (part) break;
+            }
+            if (!part) continue;
+            hitBoxes.add(fb);
+            const safeZ = gfmt(Math.max(...fixedBoxes.map((x) => x.max[2])) + 5 - b.op.wo[2], 0);
+            const travel = b.rapid || Math.min(A[2], B[2]) > geo.box.z1;
+            W('FIXTURE_HIT', 'crit', b.line, t0, 1, 'FIXTURE_HIT', { z: safeZ }, {
+              detail: t(travel ? 'wh.i.hitRapid' : 'wh.i.hit', { part: t(`wh.part.${part}`), obj: t(`wh.obj.${fb.kind}`), line: b.line, z: safeZ }),
+              fix: travel ? t('w.FIXTURE_HIT.fix', { z: safeZ }) : t('w.FIXTURE_HIT.fixCut', { obj: t(`wh.obj.${fb.kind}`) }),
+            });
+            if (!broken && (part === 'cutter' || part === 'shank')) {
+              broken = true;
+              events.push({ t: t0, type: 'break', line: b.line, text: t('ev.breakFixture', { n: toolNum, obj: t(`wh.obj.${fb.kind}`), line: b.line }) });
+            } else if (part === 'nut' || part === 'spindle') {
+              events.push({ t: t0, type: 'lost', line: b.line, text: t('ev.crashFixture', { obj: t(`wh.obj.${fb.kind}`), line: b.line }) });
+            }
+          }
         }
 
         let flags = b.rapid ? 1 : 0;
@@ -273,7 +308,7 @@ export function simulate(code, cfg, onProgress) {
       if (!def) {
         W('NO_TOOL', 'crit', op.line, it.t0, 0, 'NO_TOOL', { n: op.tool });
       } else {
-        toolNum = op.tool; tool = def; prepTool = prepareTool(def); broken = false;
+        toolNum = op.tool; tool = def; prepTool = prepareTool(def); envelope = toolEnvelope(def, m.spindle.type); broken = false;
       }
       events.push({ t: it.t0, type: 'tool', line: op.line, tool: op.tool, toolIdx: def ? getToolIdx(op.tool) : -1, text: t('ev.tool', { n: op.tool, name: def ? ` – ${toolName(def)}` : '' }) });
     } else if (it.type === 'pause') {
@@ -440,6 +475,48 @@ export function simulate(code, cfg, onProgress) {
     if (cnt) W('STARVE', cnt > 20 ? 'warn' : 'info', first, 0, worst, 'STARVE', { n: cnt, baud: m.baud, ms: fmt(m.parseMs, 1), p: Math.round(100 / worst) }, { key: 'STARVE' });
   }
 
+  // Workholding evaluation on the finished part
+  const pieces = findPieces(hm);
+  const looseLine = (p) => {
+    const [x0, y0, x1, y1] = p.bbox;
+    for (let i = C.t0.length - 1; i >= 0; i--) {
+      if (!(C.flags[i] & 4)) continue;
+      const bx = C.bx[i], by = C.by[i];
+      if (bx >= x0 - 3 && bx <= x1 + 3 && by >= y0 - 3 && by <= y1 + 3 && C.bz[i] <= geo.bedZ + 0.05) return C.line[i];
+    }
+    return lastLine;
+  };
+  const woZ = geo.zero[2];
+  const whOptions = evaluate({ pts: pathPts, fixtures, hm, pieces, box: geo.box, material, maxForce, wh, woZ, looseLine });
+  const selectedId = wh.method === 'auto' ? whOptions[0].id : wh.method;
+  const selected = whOptions.find((o) => o.id === selectedId) || whOptions[0];
+  const lineTime = (line) => {
+    const i = C.line.indexOf(line);
+    return i >= 0 ? C.t0[i] : 0;
+  };
+  for (const is of selected.issues) {
+    const text = t(`wh.i.${is.key}`, is.p || {});
+    if (is.key === 'hit' || is.key === 'hitRapid') {
+      if (wh.method === 'auto') {
+        const pp = { ...is.p, part: t(`wh.part.${is.p.part}`), obj: t(`wh.obj.${is.p.obj}`) };
+        W('FIXTURE_HIT', 'crit', is.line, is.t, 1, 'FIXTURE_HIT', { z: is.p.z }, { detail: t(`wh.i.${is.key}`, pp), fix: is.key === 'hitRapid' ? t('w.FIXTURE_HIT.fix', { z: is.p.z }) : t('w.FIXTURE_HIT.fixCut', { obj: pp.obj }) });
+      }
+    } else if (is.key === 'loose' || is.key === 'looseWeak') {
+      W('LOOSE', is.sev, is.line, lineTime(is.line), is.piece.area, 'LOOSE', {}, { detail: text });
+    } else if (is.key === 'weak') {
+      W('HOLD_WEAK', is.sev, 1, 0, is.p.f, 'HOLD_WEAK', {}, { detail: `${t(`wh.name.${selected.id}`)}: ${text}` });
+    } else if (!is.key.startsWith('na.')) {
+      warn('WH_NOTE', 'warn', 1, 0, 1, `${t('wh.section')}: ${t(`wh.name.${selected.id}`)}`, text, { key: `WH_NOTE:${is.key}` });
+    }
+  }
+  const workholding = {
+    selected: selected.id,
+    auto: wh.method === 'auto',
+    options: whOptions.map((o) => ({ id: o.id, rating: o.rating, hold: o.hold, ratio: o.ratio, issues: o.issues.map((i) => ({ sev: i.sev, key: i.key, p: i.p, line: i.line })) })),
+    fixtures: selected.fixtures || [],
+    maxForce,
+  };
+
   if (interp.error && !alarm) {
     events.push({ t: planned.totalTime, type: 'error', line: interp.error.line, text: t('ev.error', { code: interp.error.code, line: interp.error.line, msg: interp.error.message }) });
     lineSeverity.set(interp.error.line, 'crit');
@@ -477,6 +554,7 @@ export function simulate(code, cfg, onProgress) {
     chunks,
     events,
     warnings: warnList,
+    workholding,
     lineSeverity: Object.fromEntries(lineSeverity),
     finalHeights: hm.h,
     summary: {

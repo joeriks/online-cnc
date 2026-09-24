@@ -35,6 +35,8 @@ export class Viewer {
     this.scene.add(this.stockGroup);
     this.pathGroup = new THREE.Group();
     this.scene.add(this.pathGroup);
+    this.fixtureGroup = new THREE.Group();
+    this.scene.add(this.fixtureGroup);
     this.head = new THREE.Group(); // spindel + verktyg, positionerad i verktygsspetsen
     this.scene.add(this.head);
     this.toolSpin = new THREE.Group();
@@ -444,12 +446,36 @@ export class Viewer {
     this.dirtyRender = true;
   }
 
+  // Fastsättning: spännjärn, skruvar, skruvstädsbackar, tejp, lim eller vakuumtätning.
+  buildFixtures(list) {
+    disposeGroup(this.fixtureGroup);
+    for (const f of list || []) {
+      if (f.hidden) continue;
+      const mat = new THREE.MeshStandardMaterial({ color: f.color || '#8a9399', metalness: f.solid ? 0.6 : 0, roughness: f.solid ? 0.4 : 0.9, transparent: f.opacity !== undefined, opacity: f.opacity ?? 1 });
+      let mesh;
+      if (f.shape === 'cyl') {
+        const h = f.max[2] - f.min[2];
+        mesh = new THREE.Mesh(new THREE.CylinderGeometry(f.r, f.r, h, 20), mat);
+        mesh.rotation.x = Math.PI / 2;
+        mesh.position.set(f.c[0], f.c[1], (f.min[2] + f.max[2]) / 2);
+      } else {
+        const sx = f.max[0] - f.min[0], sy = f.max[1] - f.min[1], sz = f.max[2] - f.min[2];
+        mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
+        mesh.position.set((f.min[0] + f.max[0]) / 2, (f.min[1] + f.max[1]) / 2, (f.min[2] + f.max[2]) / 2);
+      }
+      this.fixtureGroup.add(mesh);
+    }
+    this.fixtureGroup.visible = !this.resultMode;
+    this.dirtyRender = true;
+  }
+
   // Resultatläge: bara den färdiga detaljen – ingen maskin, spindel, bord eller banor.
   setResultMode(on) {
     this.resultMode = on;
     this.machineGroup.visible = on ? false : this.showMachine;
     this.pathGroup.visible = on ? false : this.showPaths;
     this.head.visible = !on;
+    this.fixtureGroup.visible = !on;
     if (this.carriage) this.carriage.visible = !on;
     this.dirtyRender = true;
   }
