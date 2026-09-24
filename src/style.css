@@ -627,6 +627,24 @@ details.more[open] > summary { margin-bottom: 8px; }
 .warn-item .w-title { font-weight: 600; font-size: 13px; }
 .warn-item .w-meta { font: 11px var(--font-mono); color: var(--muted); white-space: nowrap; text-align: right; }
 .warn-item .w-detail { grid-column: 2 / span 2; font-size: 12px; color: var(--ink-2); }
+.warn-item .w-fix {
+  grid-column: 2 / span 2;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 5px 8px;
+  display: grid;
+  gap: 1px;
+}
+.warn-item .w-fix b {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--accent);
+}
 .badge {
   display: inline-block;
   min-width: 18px;

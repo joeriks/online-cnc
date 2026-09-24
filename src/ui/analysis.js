@@ -107,6 +107,7 @@ export class AnalysisPanel {
         el('span', { class: 'w-title', text: w.title }),
         meta,
         el('span', { class: 'w-detail', text: w.detail }),
+        w.fix ? el('span', { class: 'w-fix' }, el('b', { text: 'Åtgärd' }), w.fix) : null,
       );
       return el('li', {}, btn);
     }));
