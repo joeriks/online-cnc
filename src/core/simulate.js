@@ -4,7 +4,10 @@ import { interpret } from './gcode.js';
 import { plan, timeAtDistance } from './planner.js';
 import { HeightMap, prepareTool, newStampResult, chooseResolution } from './heightmap.js';
 import { cutPhysics, chipLoadRange, recommend } from './physics.js';
-import { TOOL_MATERIALS } from './library.js';
+import { loc, toolName } from './library.js';
+import { t, fmt, gfmt } from '../i18n.js';
+
+export { fmt };
 
 const SEVERITY_RANK = { info: 0, warn: 1, crit: 2 };
 
@@ -83,7 +86,10 @@ export function simulate(code, cfg, onProgress) {
     if (cur === undefined || SEVERITY_RANK[severity] > SEVERITY_RANK[cur]) lineSeverity.set(line, severity);
   };
 
-  const workZ = (machineZ, wo) => fmt(machineZ - wo[2], 2);
+  const workZ = (machineZ, wo) => gfmt(machineZ - wo[2], 2);
+  // Varning via översättningsnycklar: w.<k>.title / .detail / .fix
+  const W = (code, severity, line, time, value, k, p = {}, opts = {}) => warn(code, severity, line, time, value,
+    t(`w.${k}.title`, p), opts.detail ?? t(`w.${k}.detail`, p), { ...opts, fix: opts.fix ?? (t(`w.${k}.fix`, p) === `w.${k}.fix` ? '' : t(`w.${k}.fix`, p)) });
 
   // Tillstånd
   let toolNum = cfg.initialTool;
@@ -124,7 +130,7 @@ export function simulate(code, cfg, onProgress) {
         stopTime = blocks[k].t0;
         alarm = {
           code: 'ALARM:2', line: blocks[j].line, t: stopTime,
-          text: `Mjuk gräns: rad ${blocks[j].line} vill köra utanför arbetsområdet (${axisOutside(p, travelMin, travelMax)}). GRBL upptäcker det när raden planeras och stannar maskinen direkt – ${j - k} block före målet.`,
+          text: t('alarm.soft', { line: blocks[j].line, where: axisOutside(p, travelMin, travelMax), blocks: j - k }),
         };
         break;
       }
@@ -145,7 +151,7 @@ export function simulate(code, cfg, onProgress) {
       const nominalFeed = b.rapid ? b.rapidRate : Math.min(b.op.feed, b.rapidRate);
       naive += (b.L / nominalFeed) * 60;
       if (b.rapid) rapidDist += b.L; else cutDist += b.L;
-      if (b.feedCapped) warn('FEED_CAP', 'info', b.line, b.t0, b.op.feed, 'Matningen begränsas av maskinens maxhastighet', `Programmerat F${Math.round(b.op.feed)} men axlarna klarar bara ${Math.round(b.rapidRate)} mm/min i den här riktningen ($110–$112).`);
+      if (b.feedCapped) W('FEED_CAP', 'info', b.line, b.t0, b.op.feed, 'FEED_CAP', { f: Math.round(b.op.feed), max: Math.round(b.rapidRate) }, { fix: '' });
       const chunkLen = b.rapid ? 3 : 1;
       const n = Math.max(1, Math.ceil(b.L / chunkLen));
       const toolIdx = tool ? getToolIdx(toolNum) : -1;
@@ -166,13 +172,13 @@ export function simulate(code, cfg, onProgress) {
         const outside = [0, 1, 2].some((i) => B[i] < travelMin[i] - 1e-3 || B[i] > travelMax[i] + 1e-3);
         if (outside) {
           if (m.hardLimits) {
-            alarm = { code: 'ALARM:1', line: b.line, t: t0, text: `Hård gräns: maskinen körde på en gränsbrytare på rad ${b.line} (${axisOutside(B, travelMin, travelMax)}). GRBL stoppar alla motorer direkt, positionen är förlorad och maskinen måste referensköras ($H).` };
+            alarm = { code: 'ALARM:1', line: b.line, t: t0, text: t('alarm.hard', { line: b.line, where: axisOutside(B, travelMin, travelMax) }) };
             stopTime = t0;
             break outer;
           }
           const clamped = B.map((v, i) => Math.min(travelMax[i], Math.max(travelMin[i], v)));
           for (let i = 0; i < 3; i++) offset[i] += clamped[i] - B[i];
-          warn('TRAVEL', 'crit', b.line, t0, 1, 'Axeln kör in i ändläget', `Rörelsen går utanför arbetsområdet (${axisOutside(B, travelMin, travelMax)}). Utan gränslägesbrytare slår vagnen i ändstoppet och stegmotorn tappar steg – resten av programmet hamnar förskjutet.`, { fix: `Kontrollera nollpunkten och ämnets position under Material. Hela banan måste ligga inom maskinkoordinaterna X 0–${m.travel[0]}, Y 0–${m.travel[1]}, Z −${m.travel[2]}–0. Slå gärna på mjuka gränser ($20) så stoppar GRBL i stället för att krascha.` });
+          W('TRAVEL', 'crit', b.line, t0, 1, 'TRAVEL', { where: axisOutside(B, travelMin, travelMax), x: m.travel[0], y: m.travel[1], z: m.travel[2] });
           B = clamped;
         }
 
@@ -189,10 +195,10 @@ export function simulate(code, cfg, onProgress) {
           if (minZ < geo.bedZ - 0.01) {
             const depth = geo.bedZ - minZ;
             if (b.rapid) {
-              if (B[2] <= A[2] + 1e-6) warn('BED_RAPID', 'crit', b.line, t0, depth, 'Snabbförflyttning ner i offerskivan', `G0 går ${fmt(depth)} mm under ämnets undersida. Verktyget kraschar i bordet.`, { fix: 'Gå ner till skärdjupet med G1 och en nedstickshastighet, aldrig med G0.' });
-            } else if (depth > (cfg.spoilboard ?? 12)) warn('BED', 'crit', b.line, t0, depth, 'Fräser genom offerskivan in i maskinbordet', `Spetsen går ${fmt(depth)} mm under ämnet – djupare än offerskivan (${cfg.spoilboard ?? 12} mm).`, { fix: `Ändra slutdjupet till Z${workZ(geo.bedZ - 0.3, b.op.wo)} (0,3 mm under ämnet), eller kontrollera att ämnets tjocklek och Z-nollpunkt stämmer.` });
-            else if (depth > 1) warn('BED', 'warn', b.line, t0, depth, 'Djupt ner i offerskivan', `Spetsen går ${fmt(depth)} mm under ämnet. Vid genomfräsning räcker normalt 0,2–0,5 mm.`, { fix: `Ändra slutdjupet till Z${workZ(geo.bedZ - 0.3, b.op.wo)} (0,3 mm under ämnet).` });
-            else warn('BED', 'info', b.line, t0, depth, 'Fräser lite i offerskivan', `Spetsen går ${fmt(depth)} mm under ämnet (normalt vid genomfräsning).`);
+              if (B[2] <= A[2] + 1e-6) W('BED_RAPID', 'crit', b.line, t0, depth, 'BED_RAPID', { d: fmt(depth) });
+            } else if (depth > (cfg.spoilboard ?? 12)) W('BED', 'crit', b.line, t0, depth, 'BED_CRIT', { d: fmt(depth), s: cfg.spoilboard ?? 12, z: workZ(geo.bedZ - 0.3, b.op.wo) });
+            else if (depth > 1) W('BED', 'warn', b.line, t0, depth, 'BED_WARN', { d: fmt(depth), z: workZ(geo.bedZ - 0.3, b.op.wo) });
+            else W('BED', 'info', b.line, t0, depth, 'BED_INFO', { d: fmt(depth) });
           }
           if (st.vol > 1e-3) {
             removed += st.vol;
@@ -200,18 +206,18 @@ export function simulate(code, cfg, onProgress) {
             const ap = st.apTop - Math.max(st.minTip, geo.bedZ);
             const d = [B[0] - A[0], B[1] - A[1], B[2] - A[2]];
             const dxy = Math.hypot(d[0], d[1]);
-            if (st.shank > 0.05) warn('SHANK', 'crit', b.line, t0, st.shank, 'Verktygets skaft går i materialet', `Skärdjupet överstiger skärlängden (${fmt(prepTool.cutLen)} mm) med ${fmt(st.shank)} mm. Skaftet gnider, blir varmt och verktyget går lätt av.`, { fix: `Använd ett verktyg med minst ${Math.ceil(prepTool.cutLen + st.shank + 1)} mm skärlängd, eller fräs ur en bredare ficka först så att skaftet går fritt.` });
-            if (b.rapid) warn('RAPID_CUT', 'crit', b.line, t0, st.vol, 'Snabbförflyttning (G0) genom material', `G0 kör med ${Math.round(b.rapidRate)} mm/min rakt genom ämnet – en krasch.`, { fix: `Lägg in G0 Z${workZ(geo.box.z1 + 3, b.op.wo)} (3 mm över ämnet) före förflyttningen på rad ${b.line}, eller byt G0 mot G1 med matning om verktyget ska skära.` });
+            if (st.shank > 0.05) W('SHANK', 'crit', b.line, t0, st.shank, 'SHANK', { len: fmt(prepTool.cutLen), d: fmt(st.shank), need: Math.ceil(prepTool.cutLen + st.shank + 1) });
+            if (b.rapid) W('RAPID_CUT', 'crit', b.line, t0, st.vol, 'RAPID_CUT', { rate: Math.round(b.rapidRate), z: workZ(geo.box.z1 + 3, b.op.wo), line: b.line });
             if (rpm < 1) {
-              warn('SPINDLE_OFF', 'crit', b.line, t0, 1, 'Skär med stillastående spindel', sp.on ? 'Spindeln är på men varvtalet är 0 (S saknas eller S0). Verktyget pressas in i materialet och går av.' : 'M3 saknas – spindeln står still när verktyget går in i materialet. Verktyget går av.', { fix: `Lägg in M3 S${recRpm()} följt av G4 P${Math.ceil(m.spindle.spinUp || 1)} före första skäret.` });
+              W('SPINDLE_OFF', 'crit', b.line, t0, 1, 'SPINDLE_OFF', { rpm: recRpm(), p: Math.ceil(m.spindle.spinUp || 1) }, { detail: t(sp.on ? 'w.SPINDLE_OFF.detailOn' : 'w.SPINDLE_OFF.detailOff') });
               broken = true;
-              events.push({ t: t1, type: 'break', line: b.line, text: `Verktyg T${toolNum} gick av (spindeln stod still)` });
+              events.push({ t: t1, type: 'break', line: b.line, text: t('ev.breakStill', { n: toolNum }) });
             } else {
               const ph = cutPhysics({ vol: st.vol, dt, dxy, dz: d[2], ap, rpm, tool, material, machine: m });
               load = ph.load; force = ph.force; defl = ph.deflection; chip = ph.hex; mrr = ph.mrr;
               maxLoad = Math.max(maxLoad, load); maxForce = Math.max(maxForce, force); maxDefl = Math.max(maxDefl, defl);
               checkCut(ph, { b, t0, rpm }, chipAcc);
-              if (broken) events.push({ t: t1, type: 'break', line: b.line, text: `Verktyg T${toolNum} gick av på rad ${b.line}` });
+              if (broken) events.push({ t: t1, type: 'break', line: b.line, text: t('ev.breakLine', { n: toolNum, line: b.line }) });
               // Stegförluster: axelkraften överstiger vad motorn orkar
               if (cfg.lostSteps !== false && !broken) {
                 const L3 = Math.hypot(d[0], d[1], d[2]) || 1;
@@ -225,8 +231,8 @@ export function simulate(code, cfg, onProgress) {
                   }
                 }
                 if (lost.length) {
-                  warn('LOST_STEPS', 'crit', b.line, t0, ph.force, `Stegförlust på ${lost.join('/')}-axeln`, `Skärkraften (≈${Math.round(ph.force)} N) är större än vad stegmotorn orkar (${lost.map((a) => `${a}: ${m.thrust['XYZ'.indexOf(a)]} N`).join(', ')}). Motorn tappar steg, maskinen tappar positionen och resten av programmet hamnar förskjutet.`, { fix: reduceForce(ph, b, Math.min(...lost.map((a) => { const i = 'XYZ'.indexOf(a); return (0.7 * m.thrust[i]) / ph.force; }))) });
-                  events.push({ t: t1, type: 'lost', line: b.line, text: `Stegförlust ${lost.join('/')} på rad ${b.line}` });
+                  W('LOST_STEPS', 'crit', b.line, t0, ph.force, 'LOST_STEPS', { axes: lost.join('/'), f: Math.round(ph.force), limits: lost.map((a) => `${a}: ${m.thrust['XYZ'.indexOf(a)]} N`).join(', ') }, { fix: reduceForce(ph, b, Math.min(...lost.map((a) => (0.7 * m.thrust['XYZ'.indexOf(a)]) / ph.force))) });
+                  events.push({ t: t1, type: 'lost', line: b.line, text: t('ev.lost', { axes: lost.join('/'), line: b.line }) });
                 }
               }
             }
@@ -236,7 +242,7 @@ export function simulate(code, cfg, onProgress) {
       }
       evalChip(chipAcc, b);
     } else if (it.type === 'spindle') {
-      const t = it.t0;
+      const tt = it.t0;
       const on = op.state !== 'off';
       let target = 0;
       const s = m.spindle;
@@ -245,35 +251,35 @@ export function simulate(code, cfg, onProgress) {
           target = s.dialRpm;
           if (!routerSWarned && op.rpm && Math.abs(op.rpm - s.dialRpm) > 1) {
             routerSWarned = true;
-            warn('ROUTER_S', 'info', op.line, t, 0, 'S-värdet påverkar inte handöverfräsen', `Programmet vill ha ${op.rpm} rpm men fräsen går på ratten: ${s.dialRpm} rpm. M3/M5 slår bara på och av (via relä).`, { fix: `Vrid ratten till ≈${op.rpm} rpm, eller ändra rattvarvtalet under Maskin så att simuleringen stämmer med verkligheten.` });
+            W('ROUTER_S', 'info', op.line, tt, 0, 'ROUTER_S', { rpm: op.rpm, dial: s.dialRpm });
           }
         } else if (op.rpm <= 0) target = 0;
         else {
           target = Math.min(s.maxRpm, Math.max(s.minRpm || 0, op.rpm));
-          if (op.rpm > s.maxRpm) warn('S_MAX', 'info', op.line, t, op.rpm, 'Varvtalet begränsas', `S${op.rpm} är högre än spindelns max (${s.maxRpm} rpm, $30).`, { fix: `Sänk till S${s.maxRpm} och multiplicera matningen med ${fmt(s.maxRpm / op.rpm, 2)} för att behålla spåntjockleken.` });
+          if (op.rpm > s.maxRpm) W('S_MAX', 'info', op.line, tt, op.rpm, 'S_MAX', { s: op.rpm, max: s.maxRpm, k: fmt(s.maxRpm / op.rpm, 2) });
         }
-        if (op.rpm <= 0 && s.type !== 'router') warn('S_ZERO', 'warn', op.line, t, 0, 'Spindeln startas utan varvtal', 'M3 utan S-värde (eller S0) ger 0 % PWM – spindeln står still.', { fix: `Skriv M3 S${recRpm()} på rad ${op.line}.` });
+        if (op.rpm <= 0 && s.type !== 'router') W('S_ZERO', 'warn', op.line, tt, 0, 'S_ZERO', { rpm: recRpm(), line: op.line });
       }
-      const cur = rpmAt(t);
-      sp.from = cur; sp.to = target; sp.t = t; sp.on = on;
+      const cur = rpmAt(tt);
+      sp.from = cur; sp.to = target; sp.t = tt; sp.on = on;
       sp.dur = (s.spinUp || 1) * Math.abs(target - cur) / Math.max(1, s.maxRpm);
-      events.push({ t, type: 'spindle', line: op.line, rpm: target, on, text: on ? `Spindel ${op.state === 'ccw' ? 'M4' : 'M3'} ${Math.round(target)} rpm` : 'Spindel av (M5)' });
+      events.push({ t: tt, type: 'spindle', line: op.line, rpm: target, on, text: on ? t('ev.spindleOn', { m: op.state === 'ccw' ? 'M4' : 'M3', rpm: Math.round(target) }) : t('ev.spindleOff') });
     } else if (it.type === 'dwell') {
-      events.push({ t: it.t0, t1: it.t1, type: 'dwell', line: op.line, text: `Väntar ${op.seconds} s (G4)` });
+      events.push({ t: it.t0, t1: it.t1, type: 'dwell', line: op.line, text: t('ev.dwell', { s: fmt(op.seconds) }) });
     } else if (it.type === 'tool') {
       toolChanges++;
       const def = cfg.tools[op.tool];
-      if (sp.on && rpmAt(it.t0) > 0) warn('TC_SPINDLE', 'warn', op.line, it.t0, 0, 'Spindeln går vid verktygsbyte', 'GRBL stänger inte av spindeln vid M6.', { fix: `Lägg in M5 före T${op.tool} M6, och M3 S… + G4 P… efter bytet.` });
+      if (sp.on && rpmAt(it.t0) > 0) W('TC_SPINDLE', 'warn', op.line, it.t0, 0, 'TC_SPINDLE', { n: op.tool });
       if (!def) {
-        warn('NO_TOOL', 'crit', op.line, it.t0, 0, `T${op.tool} finns inte i verktygstabellen`, 'Simuleringen fortsätter med det gamla verktyget.', { fix: `Lägg till T${op.tool} under fliken Verktyg.` });
+        W('NO_TOOL', 'crit', op.line, it.t0, 0, 'NO_TOOL', { n: op.tool });
       } else {
         toolNum = op.tool; tool = def; prepTool = prepareTool(def); broken = false;
       }
-      events.push({ t: it.t0, type: 'tool', line: op.line, tool: op.tool, toolIdx: def ? getToolIdx(op.tool) : -1, text: `Verktygsbyte till T${op.tool}${def ? ` – ${def.name}` : ''}. Nollställ Z efter bytet.` });
+      events.push({ t: it.t0, type: 'tool', line: op.line, tool: op.tool, toolIdx: def ? getToolIdx(op.tool) : -1, text: t('ev.tool', { n: op.tool, name: def ? ` – ${toolName(def)}` : '' }) });
     } else if (it.type === 'pause') {
-      events.push({ t: it.t0, type: 'pause', line: op.line, text: `Programpaus (${op.reason}) – tryck på Start för att fortsätta` });
+      events.push({ t: it.t0, type: 'pause', line: op.line, text: t('ev.pause', { r: op.reason }) });
     } else if (it.type === 'end') {
-      events.push({ t: it.t0, type: 'end', line: op.line, text: 'Programslut' });
+      events.push({ t: it.t0, type: 'end', line: op.line, text: t('ev.end') });
     }
   }
 
@@ -292,34 +298,34 @@ export function simulate(code, cfg, onProgress) {
     const maxFeed = Math.min(b.rapidRate, m.maxRate[0], m.maxRate[1]);
     let advice;
     if (!b.rapid && actualFeed < 0.7 * b.op.feed) {
-      advice = `Maskinen hinner bara upp i ≈${Math.round(actualFeed)} mm/min av F${Math.round(b.op.feed)} på den korta sträckan (acceleration ${m.accel[0]} mm/s², $120). Längre rörelser eller lägre varvtal hjälper.`;
+      advice = t('adv.accel', { v: Math.round(actualFeed), f: Math.round(b.op.feed), a: m.accel[0] });
     } else if (suggestFeed > maxFeed && m.spindle.type !== 'router') {
       const s = Math.max(m.spindle.minRpm || 0, Math.round(maxFeed / (fzTarget / Math.max(thin, 0.05)) / z / 500) * 500);
-      advice = `Maskinen klarar max ${Math.round(maxFeed)} mm/min – sänk i stället varvtalet till ≈S${s}.`;
+      advice = t('adv.maxS', { max: Math.round(maxFeed), s });
     } else if (suggestFeed > maxFeed) {
-      advice = `Maskinen klarar max ${Math.round(maxFeed)} mm/min – vrid ner fräsens varvtal på ratten.`;
+      advice = t('adv.maxDial', { max: Math.round(maxFeed) });
     } else {
-      advice = `Prova F≈${suggestFeed}${hex < fzMin ? ' eller sänk varvtalet' : ' eller höj varvtalet'}.`;
+      advice = t(hex < fzMin ? 'adv.feedLow' : 'adv.feedHigh', { f: suggestFeed });
     }
     const line = b.line;
     const t0 = acc.t;
-    const range = `Spåntjockleken är ${fmt(hex, 3)} mm (rekommenderat ${fmt(fzMin, 3)}–${fmt(fzMax, 3)} för Ø${fmt(Deff)} i ${material.name.toLowerCase()})`;
+    const range = t('chip.range', { h: fmt(hex, 3), a: fmt(fzMin, 3), b: fmt(fzMax, 3), d: fmt(Deff), mat: loc(material).toLowerCase() });
     const plunge = acc.plunge > 0.5 * acc.w;
     const plungeFeed = Math.round((fzMin * 0.6 * z * rpm) / 10) * 10;
     const plungeMax = Math.round((fzMax * 0.8 * z * rpm) / 10) * 10;
     if (plunge) {
       // Vid nedstick accepteras tunnare spån, men för långsamt nedstick gnider ändå.
-      if (hex < fzMin * 0.25) warn('PLUNGE_SLOW', 'info', line, t0, fzMin / hex, 'Mycket långsamt nedstick', `Spåntjockleken vid nedsticket är ${fmt(hex, 3)} mm per skär. Spetsen gnider och värms upp – en ramp eller helix ger renare skär och tar mindre tid.`, { fix: `Höj nedstickshastigheten till ≈F${Math.min(plungeFeed, m.maxRate[2])}, eller ramp in i 2–5° med G1 X/Y/Z samtidigt.` });
-      else if (hex > fzMax) warn('PLUNGE_FAST', 'warn', line, t0, hex / fzMax, 'För snabbt nedstick', `Spåntjockleken vid nedsticket är ${fmt(hex, 3)} mm per skär (max ≈${fmt(fzMax, 3)}). Centrumdelen av eggen tål inte det.`, { fix: `Sänk nedstickshastigheten till ≈F${plungeMax}, eller ramp in i 2–5°.` });
+      if (hex < fzMin * 0.25) W('PLUNGE_SLOW', 'info', line, t0, fzMin / hex, 'PLUNGE_SLOW', { h: fmt(hex, 3), f: Math.min(plungeFeed, m.maxRate[2]) });
+      else if (hex > fzMax) W('PLUNGE_FAST', 'warn', line, t0, hex / fzMax, 'PLUNGE_FAST', { h: fmt(hex, 3), max: fmt(fzMax, 3), f: plungeMax });
       return;
     }
     if (hex < fzMin * 0.6) {
-      if (material.melt) warn('MELT', 'warn', line, t0, fzMin / hex, 'Risk att plasten smälter', `${range}. Tunna spån tar inte med sig värmen – plasten smälter och svetsar fast.`, { fix: advice });
-      else if (material.group === 'metal') warn('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'För tunna spån – eggen gnider', `${range}. Metallen kladdar fast på eggen och verktyget slits snabbt.`, { fix: advice });
-      else warn('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'För tunna spån – risk för brännmärken', `${range}. Eggen gnider i stället för att skära.`, { fix: advice });
+      if (material.melt) W('MELT', 'warn', line, t0, fzMin / hex, 'MELT', { range }, { fix: advice });
+      else if (material.group === 'metal') W('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'CHIP_LOW_METAL', { range }, { fix: advice });
+      else W('CHIP_LOW', 'warn', line, t0, fzMin / hex, 'CHIP_LOW', { range }, { fix: advice });
     } else if (hex > fzMax * 1.4) {
       const sev = hex > fzMax * 2.5 ? 'crit' : 'warn';
-      warn('CHIP_HIGH', sev, line, t0, hex / fzMax, 'För tjocka spån', `${range}. Eggen överbelastas och kan flisa sig.`, { fix: advice });
+      W('CHIP_HIGH', sev, line, t0, hex / fzMax, 'CHIP_HIGH', { range }, { fix: advice });
     }
   }
 
@@ -336,17 +342,17 @@ export function simulate(code, cfg, onProgress) {
     const opts = [];
     const feed = b.op.feed || 0;
     if (ph.plunge) {
-      opts.push(`sänk nedstickshastigheten till F${round10(feed * Math.pow(r, 1 / (1 - material.mc)))} (nu F${Math.round(feed)})`);
-      opts.push('ramp in i 2–5° i stället för att borra rakt ner');
+      opts.push(t('fix.plungeFeed', { f: round10(feed * Math.pow(r, 1 / (1 - material.mc))), now: Math.round(feed) }));
+      opts.push(t('fix.ramp'));
     } else {
-      if (ph.ap > 0.1) opts.push(`minska skärdjupet per varv till ${fmt(floorStep(ph.ap * r, 0.05))} mm (nu ≈${fmt(ph.ap)} mm)`);
-      if (ph.ae >= 0.9 * ph.Deff) opts.push(`fräs med sidsteg ≈${fmt(floorStep(ph.Deff * Math.min(0.4, r), 0.05))} mm i stället för fullt spår (adaptiv eller trokoidal bana)`);
-      else if (ph.ae * r >= 0.05 * ph.Deff) opts.push(`minska sidsteget till ${fmt(floorStep(ph.ae * r, 0.05))} mm (nu ≈${fmt(ph.ae)} mm)`);
+      if (ph.ap > 0.1) opts.push(t('fix.ap', { v: fmt(floorStep(ph.ap * r, 0.05)), now: fmt(ph.ap) }));
+      if (ph.ae >= 0.9 * ph.Deff) opts.push(t('fix.slot', { v: fmt(floorStep(ph.Deff * Math.min(0.4, r), 0.05)) }));
+      else if (ph.ae * r >= 0.05 * ph.Deff) opts.push(t('fix.ae', { v: fmt(floorStep(ph.ae * r, 0.05)), now: fmt(ph.ae) }));
       const fr = Math.pow(r, 1 / (1 - material.mc));
       const [fzMin] = chipLoadRange(material, ph.Deff);
-      if (feed > 0 && ph.hex * fr >= fzMin * 0.6) opts.push(`sänk matningen till F${round10(feed * fr)} (nu F${Math.round(feed)})`);
+      if (feed > 0 && ph.hex * fr >= fzMin * 0.6) opts.push(t('fix.feed', { f: round10(feed * fr), now: Math.round(feed) }));
     }
-    let text = opts.length ? cap(opts.join(', eller ')) + '.' : '';
+    let text = opts.length ? cap(opts.join(t('fix.or'))) + '.' : '';
     if (extra) text += ` ${extra}`;
     return text.trim();
   }
@@ -356,8 +362,8 @@ export function simulate(code, cfg, onProgress) {
     const L = tool.stickout;
     const Lnew = Math.floor(L * Math.pow(Math.min(1, rTool), 1 / power));
     const minL = Math.ceil((tool.fluteLen || 5) + 2);
-    if (Lnew < L - 1 && Lnew >= minL) return `Ett kortare utstick hjälper också: ${Lnew} mm i stället för ${L} mm.`;
-    if (Lnew < minL && L > minL + 1) return `Korta utsticket till ${minL} mm (så kort skärlängden tillåter) eller välj ett grövre verktyg.`;
+    if (Lnew < L - 1 && Lnew >= minL) return t('fix.stickout', { n: Lnew, now: L });
+    if (Lnew < minL && L > minL + 1) return t('fix.stickoutMin', { n: minL });
     return '';
   }
 
@@ -366,12 +372,12 @@ export function simulate(code, cfg, onProgress) {
     const r = target / ph.deflection;
     let extra = '';
     if (ph.machineDefl > ph.toolDefl) {
-      extra = `Det mesta (${fmt(ph.machineDefl, 3)} mm) är ramen som fjädrar (styvhet ${m.stiffness} N/mm) – ett kortare verktyg hjälper föga, mindre skärkraft gör det.`;
+      extra = t('fix.frame', { d: fmt(ph.machineDefl, 3), k: m.stiffness });
     } else {
       const rest = Math.max(0.01, target - ph.machineDefl);
       extra = stickoutHint(rest / ph.toolDefl, 3);
     }
-    extra += ' Vill du hålla måtten: grovfräs med dessa data och lämna 0,2–0,3 mm till en lätt finskärning.';
+    extra += ` ${t('fix.finish')}`;
     return reduceForce(ph, b, r, extra);
   }
 
@@ -381,7 +387,7 @@ export function simulate(code, cfg, onProgress) {
     const s = m.spindle;
     if (s.type !== 'router' && rpm < s.maxRpm * 0.9) {
       const rpmNew = Math.min(s.maxRpm, Math.round(rpm / Math.max(r, 0.3) / 500) * 500);
-      extra = `Spindeln ger mer effekt vid högre varvtal: S${rpmNew} med F${round10((b.op.feed || 0) * (rpmNew / rpm))} ger samma spåntjocklek men ${Math.round((rpmNew / rpm) * 100)} % tillgänglig effekt.`;
+      extra = t('fix.rpmPower', { s: rpmNew, f: round10((b.op.feed || 0) * (rpmNew / rpm)), p: Math.round((rpmNew / rpm) * 100) });
     }
     return reduceForce(ph, b, r, extra);
   }
@@ -390,7 +396,7 @@ export function simulate(code, cfg, onProgress) {
     const line = b.line;
     const vcMax = material.vcMax[tool.material] || material.vcMax.carbide;
     if (rpm < sp.to * 0.9 && sp.on) {
-      warn('SPINUP', 'warn', line, t0, sp.to - rpm, 'Spindeln har inte nått fullt varvtal', `Verktyget går in i materialet vid ≈${Math.round(rpm)} rpm av ${Math.round(sp.to)}. GRBL väntar inte på att spindeln varvar upp.`, { fix: `Lägg in G4 P${Math.ceil(m.spindle.spinUp || 2)} direkt efter M3 så hinner spindeln upp i varv.` });
+      W('SPINUP', 'warn', line, t0, sp.to - rpm, 'SPINUP', { rpm: Math.round(rpm), target: Math.round(sp.to), p: Math.ceil(m.spindle.spinUp || 2) });
     }
     // Spåntjockleken bedöms som volymviktat medel över blocket (se evalChip),
     // och bara där verktyget har ett rejält ingrepp – inte vid in- och utgång.
@@ -399,27 +405,27 @@ export function simulate(code, cfg, onProgress) {
       chipAcc.w += w; chipAcc.hex += ph.hex * w; chipAcc.fz += ph.fz * w; chipAcc.deff += ph.Deff * w; chipAcc.rpm += rpm * w; chipAcc.feed += (ph.fz * Math.max(1, tool.flutes) * rpm) * w; if (ph.plunge) chipAcc.plunge += w;
       if (chipAcc.t < 0) chipAcc.t = t0;
     }
-    if (ph.vc > vcMax) warn('VC_HIGH', 'warn', line, t0, ph.vc, 'För hög skärhastighet', `vc ≈ ${Math.round(ph.vc)} m/min, max ≈ ${vcMax} m/min för ${TOOL_MATERIALS[tool.material]?.name || 'verktyget'} i ${material.name.toLowerCase()}. Eggen blir för varm.`, { fix: (() => { const k = vcMax / ph.vc; return `Sänk varvtalet till ≈S${Math.round((rpm * k) / 500) * 500} och matningen till ≈F${Math.round((b.op.feed * k) / 10) * 10} (samma spåntjocklek).`; })() });
+    if (ph.vc > vcMax) { const k = vcMax / ph.vc; W('VC_HIGH', 'warn', line, t0, ph.vc, 'VC_HIGH', { vc: Math.round(ph.vc), max: vcMax, tm: t(`tm.${tool.material}`), mat: loc(material).toLowerCase(), s: Math.round((rpm * k) / 500) * 500, f: round10(b.op.feed * k) }); }
     if (ph.load > 0.85) {
       const sev = ph.load > 1.2 ? 'crit' : 'warn';
-      warn('POWER', sev, line, t0, ph.load, ph.load > 1 ? 'Spindeln överbelastas och tappar varv' : 'Spindeln går nära maxeffekt', `Skäret kräver ≈${Math.round(ph.power)} W men spindeln ger ${Math.round(ph.avail)} W vid ${Math.round(rpm)} rpm (${Math.round(ph.load * 100)} %).`, { fix: powerFix(ph, b, rpm) });
+      W('POWER', sev, line, t0, ph.load, ph.load > 1 ? 'POWER_OVER' : 'POWER_NEAR', { p: Math.round(ph.power), avail: Math.round(ph.avail), rpm: Math.round(rpm), load: Math.round(ph.load * 100) }, { detail: t('w.POWER.detail', { p: Math.round(ph.power), avail: Math.round(ph.avail), rpm: Math.round(rpm), load: Math.round(ph.load * 100) }), fix: powerFix(ph, b, rpm) });
     }
     if (ph.load > 2.2) {
       broken = true;
-      warn('STALL', 'crit', line, t0, ph.load, 'Spindeln tvärstannar', `Effektbehovet är ${Math.round(ph.load * 100)} % av vad spindeln orkar. Spindeln stannar i skäret och verktyget går av.`, { fix: powerFix(ph, b, rpm) });
+      W('STALL', 'crit', line, t0, ph.load, 'STALL', { load: Math.round(ph.load * 100) }, { fix: powerFix(ph, b, rpm) });
       return;
     }
     if (ph.deflection > 0.08) {
       const sev = ph.deflection > 0.2 ? 'crit' : 'warn';
-      warn('DEFLECT', sev, line, t0, ph.deflection, 'Verktyg och maskin böjs ut', `Utböjning ≈${fmt(ph.deflection, 3)} mm (verktyg ${fmt(ph.toolDefl, 3)} + maskin ${fmt(ph.machineDefl, 3)}) vid ≈${Math.round(ph.force)} N. Ger måttfel och risk för vibrationer (chatter).`, { fix: deflectFix(ph, b) });
+      W('DEFLECT', sev, line, t0, ph.deflection, 'DEFLECT', { d: fmt(ph.deflection, 3), dt: fmt(ph.toolDefl, 3), dm: fmt(ph.machineDefl, 3), f: Math.round(ph.force) }, { fix: deflectFix(ph, b) });
     }
     if (ph.stressRatio >= 1) {
       broken = true;
-      warn('BREAK', 'crit', line, t0, ph.stressRatio, 'Verktyget går av', `Böjspänningen i verktyget är ${Math.round(ph.stressRatio * 100)} % av brottgränsen (kraft ≈${Math.round(ph.force)} N, utstick ${tool.stickout} mm).`, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)) });
+      W('BREAK', 'crit', line, t0, ph.stressRatio, 'BREAK', { p: Math.round(ph.stressRatio * 100), f: Math.round(ph.force), l: tool.stickout }, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)) });
     } else if (ph.stressRatio > 0.65) {
-      warn('BREAK_RISK', 'warn', line, t0, ph.stressRatio, 'Stor risk att verktyget går av', `Böjspänningen är ${Math.round(ph.stressRatio * 100)} % av brottgränsen (kraft ≈${Math.round(ph.force)} N).`, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)) });
+      W('BREAK_RISK', 'warn', line, t0, ph.stressRatio, 'BREAK_RISK', { p: Math.round(ph.stressRatio * 100), f: Math.round(ph.force) }, { fix: reduceForce(ph, b, 0.5 / ph.stressRatio, stickoutHint(0.5 / ph.stressRatio, 1)) });
     }
-    if (ph.plunge && !tool.centerCutting) warn('PLUNGE_NC', 'crit', line, t0, 1, 'Nedstick med verktyg som inte skär i centrum', 'Verktyget kan inte borra rakt ner.', { fix: 'Ramp in i 2–5° eller helixfräs ner (G2/G3 med Z), eller börja utanför ämnet.' });
+    if (ph.plunge && !tool.centerCutting) W('PLUNGE_NC', 'crit', line, t0, 1, 'PLUNGE_NC');
   }
 
   // Svältande buffert
@@ -431,11 +437,11 @@ export function simulate(code, cfg, onProgress) {
       worst = Math.max(worst, f);
       first = Math.min(first, line);
     }
-    if (cnt) warn('STARVE', cnt > 20 ? 'warn' : 'info', first, 0, worst, 'Planeringsbufferten svälter – maskinen hackar', `${cnt} rader är så korta att styrningen inte hinner ta emot dem (${m.baud} baud, ≈${m.parseMs} ms/rad). Farten sjunker till ned mot ${Math.round(100 / worst)} % av den planerade.`, { key: 'STARVE', fix: 'Exportera med bågar (G2/G3) i stället för korta raka segment, öka toleransen i CAM så att segmenten blir längre, eller använd en 32-bitars styrning (grblHAL) med större buffert.' });
+    if (cnt) W('STARVE', cnt > 20 ? 'warn' : 'info', first, 0, worst, 'STARVE', { n: cnt, baud: m.baud, ms: fmt(m.parseMs, 1), p: Math.round(100 / worst) }, { key: 'STARVE' });
   }
 
   if (interp.error && !alarm) {
-    events.push({ t: planned.totalTime, type: 'error', line: interp.error.line, text: `error:${interp.error.code} på rad ${interp.error.line}: ${interp.error.message}` });
+    events.push({ t: planned.totalTime, type: 'error', line: interp.error.line, text: t('ev.error', { code: interp.error.code, line: interp.error.line, msg: interp.error.message }) });
     lineSeverity.set(interp.error.line, 'crit');
   }
   if (alarm) {
@@ -516,10 +522,9 @@ function axisOutside(p, min, max) {
     if (p[i] < min[i] - 1e-3) parts.push(`${'XYZ'[i]} ${fmt(p[i])} < ${fmt(min[i])}`);
     else if (p[i] > max[i] + 1e-3) parts.push(`${'XYZ'[i]} ${fmt(p[i])} > ${fmt(max[i])}`);
   }
-  return `maskinkoordinat ${parts.join(', ')}`;
+  return t('axis.outside', { parts: parts.join(', ') });
 }
 
-// Snabb svensk talformatering (decimalkomma, utan onödiga nollor).
 const round10 = (v) => Math.max(10, Math.round(v / 10) * 10);
 const floorStep = (v, step) => Math.max(step, Math.floor(v / step) * step);
 
@@ -527,10 +532,3 @@ function cap(s) {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-export function fmt(v, dec = 2) {
-  const f = 10 ** dec;
-  let s = String(Math.round(Number(v) * f) / f);
-  if (s.includes('e')) s = Number(v).toFixed(dec);
-  if (s === '-0') s = '0';
-  return s.replace('-', '−').replace('.', ',');
-}

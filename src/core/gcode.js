@@ -2,34 +2,13 @@
 // Resultatet är en lista med operationer i maskinkoordinater (mm) som
 // planeraren och simulatorn sedan kör.
 
-export const GRBL_ERRORS = {
-  1: 'Förväntade en kommandobokstav',
-  2: 'Felaktigt talformat',
-  3: 'Ogiltigt $-kommando',
-  20: 'Kommandot stöds inte av GRBL',
-  21: 'Två kommandon ur samma modalgrupp på samma rad',
-  22: 'Matningshastighet (F) saknas',
-  23: 'Kommandot kräver ett heltalsvärde',
-  24: 'Två kommandon på raden vill använda axelorden',
-  25: 'Samma ord förekommer två gånger på raden',
-  26: 'Axelord saknas för kommandot',
-  27: 'Ogiltigt radnummer (N)',
-  28: 'Ett obligatoriskt värde saknas (t.ex. P för G4)',
-  29: 'Koordinatsystemet stöds inte',
-  30: 'G53 kräver att G0 eller G1 är aktivt',
-  31: 'Axelord utan rörelsekommando (G80 aktivt)',
-  32: 'Bågen saknar axelord i det valda planet',
-  33: 'Ogiltigt mål – bågen går inte att beräkna',
-  34: 'Bågradien (R) går inte ihop med start- och slutpunkt',
-  35: 'IJK-förskjutning saknas i det valda planet',
-  36: 'Oanvända ord på raden',
-  37: 'Verktygslängdkompensation (G43.1) får bara ha Z',
-  38: 'Verktygsnumret är större än 255',
-};
+import { t } from '../i18n.js';
+
+export const GRBL_ERROR_CODES = [1, 2, 3, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38];
 
 export class GcodeError extends Error {
   constructor(code, detail) {
-    super(GRBL_ERRORS[code] + (detail ? ` (${detail})` : ''));
+    super(t(`err.${code}`) + (detail ? ` (${detail})` : ''));
     this.code = code;
   }
 }
@@ -62,7 +41,7 @@ export function tokenize(s) {
     const L = s[i];
     if (L < 'A' || L > 'Z') throw new GcodeError(1, `"${L}"`);
     const m = NUM_RE.exec(s.slice(i + 1));
-    if (!m) throw new GcodeError(2, `efter ${L}`);
+    if (!m) throw new GcodeError(2, t('errd.after', { l: L }));
     words.push({ L, v: parseFloat(m[0]) });
     i += 1 + m[0].length;
   }
@@ -161,9 +140,9 @@ export function interpret(text, env) {
         const home = env.home || [0, 0, 0];
         move(true, [st.pos[0], st.pos[1], home[2]], 0, ln);
         move(true, home.slice(), 0, ln);
-        notes.push({ line: ln, text: '$H: maskinen referenskörs till hemläget.' });
+        notes.push({ line: ln, text: t('note.home') });
       } else if (/^\$[A-Z0-9#$=.JIGNCX-]*$/.test(s)) {
-        notes.push({ line: ln, text: `${s} påverkar inte rörelsen och hoppas över i simuleringen.` });
+        notes.push({ line: ln, text: t('note.skip', { cmd: s }) });
       } else throw new GcodeError(3);
       return;
     }
@@ -175,7 +154,7 @@ export function interpret(text, env) {
       if (w.L === 'G') gs.push(w.v);
       else if (w.L === 'M') ms.push(w.v);
       else {
-        if (!'FIJKLNPRSTXYZ'.includes(w.L)) throw new GcodeError(20, `${w.L}-ord (maskinen har tre axlar)`);
+        if (!'FIJKLNPRSTXYZ'.includes(w.L)) throw new GcodeError(20, t('errd.axes', { l: w.L }));
         if (w.L in val) throw new GcodeError(25, w.L);
         val[w.L] = w.v;
       }
@@ -189,7 +168,7 @@ export function interpret(text, env) {
       if (Math.abs(v * 10 - k) > 1e-3) throw new GcodeError(23, `G${v}`);
       const grp = G_GROUP[k];
       if (!grp) throw new GcodeError(20, `G${v}`);
-      if (grp === 'probe') throw new GcodeError(20, `G${v} (probning simuleras inte)`);
+      if (grp === 'probe') throw new GcodeError(20, t('errd.probe', { v }));
       if (groups[grp] !== undefined) throw new GcodeError(21, `G${v}`);
       groups[grp] = k;
     }
@@ -201,8 +180,8 @@ export function interpret(text, env) {
       if (mg[grp] !== undefined) throw new GcodeError(21, `M${v}`);
       mg[grp] = v;
     }
-    if (groups.arcdistance === 901) throw new GcodeError(20, 'G90.1 – GRBL stöder bara inkrementella IJK (G91.1)');
-    if (mg.tool === 6 && !env.allowToolChange) throw new GcodeError(20, 'M6 – aktivera verktygsbyte i maskininställningarna');
+    if (groups.arcdistance === 901) throw new GcodeError(20, t('errd.g901'));
+    if (mg.tool === 6 && !env.allowToolChange) throw new GcodeError(20, t('errd.m6'));
 
     // Modala lägen gäller för hela raden innan värden tolkas
     if (groups.feedmode !== undefined) st.inverse = groups.feedmode === 930;
@@ -221,14 +200,14 @@ export function interpret(text, env) {
     let inverseF = 0;
     if ('F' in val) {
       used.add('F');
-      if (val.F < 0) throw new GcodeError(2, 'negativ F');
+      if (val.F < 0) throw new GcodeError(2, t('errd.negF'));
       if (st.inverse) inverseF = val.F;
       else st.feed = val.F * unit;
     }
     // S
     if ('S' in val) {
       used.add('S');
-      if (val.S < 0) throw new GcodeError(2, 'negativt S');
+      if (val.S < 0) throw new GcodeError(2, t('errd.negS'));
     }
     // T
     if ('T' in val) {
@@ -255,14 +234,14 @@ export function interpret(text, env) {
     if (mg.coolant !== undefined) ops.push({ type: 'coolant', state: mg.coolant, line: ln });
     // G4
     if (nonmodal === 40) {
-      if (!('P' in val)) throw new GcodeError(28, 'P saknas för G4');
+      if (!('P' in val)) throw new GcodeError(28, t('errd.g4P'));
       used.add('P');
       ops.push({ type: 'dwell', seconds: val.P, line: ln });
     }
     // G43.1 / G49
     if (groups.tlo === 431) {
       if ('X' in val || 'Y' in val) throw new GcodeError(37);
-      if (!('Z' in val)) throw new GcodeError(26, 'G43.1 utan Z');
+      if (!('Z' in val)) throw new GcodeError(26, t('errd.g431'));
       st.tlo = val.Z * unit;
       used.add('Z');
     } else if (groups.tlo === 490) st.tlo = 0;
@@ -284,7 +263,7 @@ export function interpret(text, env) {
     // Icke-modala kommandon som använder axelord
     let axisUsedByNonmodal = false;
     if (nonmodal === 100) {
-      if (!('L' in val) || !('P' in val)) throw new GcodeError(28, 'G10 kräver L och P');
+      if (!('L' in val) || !('P' in val)) throw new GcodeError(28, t('errd.g10'));
       used.add('L'); used.add('P');
       let p = val.P;
       if (!Number.isInteger(p) || p < 0 || p > 6) throw new GcodeError(29);
@@ -304,7 +283,7 @@ export function interpret(text, env) {
     } else if (nonmodal === 281) st.g28 = st.pos.slice();
     else if (nonmodal === 301) st.g30 = st.pos.slice();
     else if (nonmodal === 920) {
-      if (!hasAxis) throw new GcodeError(26, 'G92 utan axelord');
+      if (!hasAxis) throw new GcodeError(26, t('errd.g92'));
       AXES.forEach((a, i) => {
         if (!(a in val)) return;
         st.g92[i] = st.pos[i] - st.wcs[st.wcsIdx][i] - (i === 2 ? st.tlo : 0) - val[a] * unit;
@@ -367,7 +346,7 @@ export function interpret(text, env) {
     let radius;
     if ('R' in val) {
       used.add('R');
-      if (x === 0 && y === 0 && target.every((v, i) => v === st.pos[i])) throw new GcodeError(33, 'R-båge till samma punkt');
+      if (x === 0 && y === 0 && target.every((v, i) => v === st.pos[i])) throw new GcodeError(33, t('errd.rSame'));
       let r = val.R * unit;
       let h = 4 * r * r - x * x - y * y;
       if (h < 0) throw new GcodeError(34);
@@ -392,7 +371,7 @@ export function interpret(text, env) {
       const targetR = Math.hypot(tx, ty);
       radius = Math.hypot(offset[a0], offset[a1]);
       const dr = Math.abs(targetR - radius);
-      if (dr > 0.005 && (dr > 0.5 || dr > 0.001 * radius)) throw new GcodeError(33, `radien skiljer ${dr.toFixed(3)} mm`);
+      if (dr > 0.005 && (dr > 0.5 || dr > 0.001 * radius)) throw new GcodeError(33, t('errd.radius', { d: dr.toFixed(3) }));
     }
     const arc = segmentArc(st.pos, target, offset, radius, plane, cw, env.arcTolerance ?? 0.002);
     const feed = st.inverse ? arc.length * inverseF : st.feed;

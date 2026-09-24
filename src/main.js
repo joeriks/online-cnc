@@ -1,7 +1,8 @@
 import './style.css';
 import SimWorker from './sim.worker.js?worker&inline';
 import { MACHINES, TOOLS, MATERIALS, findById, cloneTool } from './core/library.js';
-import { EXAMPLES } from './core/examples.js';
+import { EXAMPLES, exampleName } from './core/examples.js';
+import { t, setLang, getLang, nf } from './i18n.js';
 import { describeTool } from './core/tool.js';
 import { Viewer } from './view/scene.js';
 import { fmtTime } from './view/chart.js';
@@ -12,6 +13,10 @@ import { renderMachine, renderTools, renderStock, fitStock } from './ui/settings
 
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'spansim-state-v1';
+const LANG_KEY = 'spansim-lang';
+
+// English is the default language; the choice is remembered in this browser.
+try { setLang(localStorage.getItem(LANG_KEY) || 'en'); } catch { setLang('en'); }
 
 // ---------- Tillstånd ----------
 
@@ -117,7 +122,11 @@ for (const tab of document.querySelectorAll('.tab')) {
 
 // Exempel
 const exSel = $('example-select');
-for (const ex of EXAMPLES) exSel.append(new Option(ex.name, ex.id));
+function fillExamples() {
+  exSel.replaceChildren(new Option(t('app.examples'), ''));
+  for (const ex of EXAMPLES) exSel.append(new Option(exampleName(ex), ex.id));
+}
+fillExamples();
 exSel.addEventListener('change', () => {
   const ex = EXAMPLES.find((e) => e.id === exSel.value);
   exSel.value = '';
@@ -160,7 +169,7 @@ edBox.addEventListener('drop', async (e) => {
 });
 
 function updateEditorMeta() {
-  $('editor-meta').textContent = `${fileName ? `${fileName} · ` : ''}${editor.lineCount.toLocaleString('sv-SE')} rader`;
+  $('editor-meta').textContent = `${fileName ? `${fileName} · ` : ''}${t('editor.lines', { n: nf(editor.lineCount) })}`;
 }
 updateEditorMeta();
 
@@ -179,7 +188,10 @@ function scheduleRun(ms) {
   runTimer = setTimeout(run, ms);
 }
 
-function setStatus(stateName, text) {
+let statusKey = 'status.idle';
+function setStatus(stateName, key) {
+  statusKey = key;
+  const text = t(key);
   const chip = $('status-chip');
   chip.dataset.state = stateName;
   chip.textContent = text;
@@ -192,26 +204,26 @@ function run() {
   const id = ++jobId;
   $('busy').hidden = false;
   $('busy-fill').style.width = '0%';
-  setStatus('busy', 'Simulerar');
+  setStatus('busy', 'status.busy');
   worker.onmessage = (e) => {
     const d = e.data;
     if (d.id !== id) return;
     if (d.progress !== undefined) { $('busy-fill').style.width = `${Math.round(d.progress * 100)}%`; return; }
     $('busy').hidden = true;
     if (d.error) {
-      setStatus('crit', 'Fel');
+      setStatus('crit', 'status.error');
       $('editor-foot').innerHTML = '';
-      $('editor-foot').append(Object.assign(document.createElement('span'), { className: 'err', textContent: `Simuleringen kraschade: ${d.error.split('\n')[0]}` }));
+      $('editor-foot').append(Object.assign(document.createElement('span'), { className: 'err', textContent: t('editor.crashed', { msg: d.error.split('\n')[0] }) }));
       return;
     }
     applyResult(d.result);
   };
   worker.onerror = (err) => {
     $('busy').hidden = true;
-    setStatus('crit', 'Fel');
+    setStatus('crit', 'status.error');
     console.error(err);
   };
-  worker.postMessage({ id, code: state.code, cfg: buildCfg() });
+  worker.postMessage({ id, code: state.code, cfg: buildCfg(), lang: getLang() });
 }
 
 function applyResult(r) {
@@ -233,13 +245,13 @@ function applyResult(r) {
   editor.setSeverity(r.lineSeverity);
   const s = r.summary;
   const kind = r.error || r.alarm || s.broken || s.lostSteps || s.counts.crit ? 'crit' : s.counts.warn ? 'warn' : 'ok';
-  setStatus(kind, kind === 'crit' ? 'Problem' : kind === 'warn' ? 'Varningar' : 'OK');
+  setStatus(kind, `status.${kind}`);
   const foot = $('editor-foot');
   foot.replaceChildren();
   if (r.error) {
-    foot.append(Object.assign(document.createElement('span'), { className: 'err', textContent: `error:${r.error.code} rad ${r.error.line}: ${r.error.message}` }));
+    foot.append(Object.assign(document.createElement('span'), { className: 'err', textContent: t('editor.error', { code: r.error.code, line: r.error.line, msg: r.error.message }) }));
   } else {
-    foot.textContent = `${s.blocks.toLocaleString('sv-SE')} rörelseblock · ${fmtTime(s.totalTime)} · ${s.counts.crit} kritiska, ${s.counts.warn} varningar`;
+    foot.textContent = t('editor.foot', { blocks: nf(s.blocks), time: fmtTime(s.totalTime), crit: s.counts.crit, warn: s.counts.warn });
   }
   if (startAtBeginning) {
     startAtBeginning = false;
@@ -251,7 +263,7 @@ function applyResult(r) {
   syncEvents(playT);
   // Tabbens räknare
   const tab = document.querySelector('.tab[data-tab="analysis"]');
-  tab.replaceChildren('Analys');
+  tab.replaceChildren(t('tab.analysis'));
   const n = s.counts.crit + s.counts.warn;
   if (n) {
     const b = document.createElement('span');
@@ -275,11 +287,31 @@ const playBtn = $('play-btn');
 function setPlaying(p) {
   playing = p;
   playBtn.classList.toggle('playing', p);
-  playBtn.setAttribute('aria-label', p ? 'Paus' : 'Start');
+  playBtn.setAttribute('aria-label', p ? t('tr.pause') : t('tr.start'));
   lastFrame = performance.now();
 }
+// Result mode: only the finished part, without machine, spindle or toolpaths.
+let resultMode = false;
+function setResultMode(on) {
+  resultMode = on;
+  $('result-btn').setAttribute('aria-pressed', String(on));
+  viewer.setResultMode(on);
+  $('dro').hidden = on;
+  if (on) {
+    setPlaying(false);
+    $('banner').hidden = true;
+    if (result) {
+      seek(result.summary.totalTime);
+      const b = result.geometry.box;
+      viewer.view('iso', { x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, z0: b.z0, z1: b.z1 });
+    }
+  }
+}
+$('result-btn').addEventListener('click', () => setResultMode(!resultMode));
+
 playBtn.addEventListener('click', () => {
   if (!result) { run(); return; }
+  if (resultMode) setResultMode(false);
   if (!playing && playT >= result.summary.totalTime - 1e-6) rewind();
   setPlaying(!playing);
 });
@@ -347,8 +379,8 @@ function render() {
   $('dro-wz').textContent = f3(st.pos[2] - st.wo[2]);
   $('dro-f').textContent = Math.round(st.feed).toLocaleString('sv-SE');
   $('dro-s').textContent = Math.round(st.rpm).toLocaleString('sv-SE');
-  $('dro-t').textContent = toolEntry ? `T${toolEntry.number} ${describeTool(toolEntry.def)}${st.broken ? ' – AV' : ''}` : '–';
-  $('dro-line').textContent = st.line ? `Rad ${st.line}` : 'Rad –';
+  $('dro-t').textContent = toolEntry ? `T${toolEntry.number} ${describeTool(toolEntry.def)}${st.broken ? t('dro.broken') : ''}` : '–';
+  $('dro-line').textContent = st.line ? t('dro.line', { n: st.line }) : t('dro.noline');
   const atEnd = playT >= total - 1e-6;
   const alarmNow = st.alarm && playT >= st.alarm.t;
   const s = alarmNow ? 'Alarm' : playing && !atEnd ? 'Run' : !atEnd && playT > 0 ? 'Hold' : 'Idle';
@@ -359,7 +391,7 @@ function render() {
   const fill = $('load-fill');
   fill.style.width = `${Math.min(100, load * 100)}%`;
   fill.classList.toggle('hot', load > 1);
-  $('load-text').textContent = st.cutting ? `Last ${Math.round(load * 100)} % · ${st.force.toFixed(1)} N` : st.rapid && st.moving ? 'Snabbförflyttning' : 'Skär inte';
+  $('load-text').textContent = st.cutting ? t('dro.load', { p: Math.round(load * 100), f: nf(st.force, 1) }) : st.rapid && st.moving ? t('dro.rapid') : t('dro.notcutting');
 
   editor.setCurrentLine(st.line, playing);
   $('timeline').value = total > 0 ? Math.round((playT / total) * 1000) : 0;
@@ -415,6 +447,31 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
   analysis.chart.draw();
 });
 
+// ---------- Language ----------
+
+function applyStatic() {
+  document.documentElement.lang = getLang();
+  for (const e of document.querySelectorAll('[data-i18n]')) e.textContent = t(e.dataset.i18n);
+  for (const e of document.querySelectorAll('[data-i18n-title]')) e.title = t(e.dataset.i18nTitle);
+  for (const e of document.querySelectorAll('[data-i18n-aria]')) e.setAttribute('aria-label', t(e.dataset.i18nAria));
+  $('status-chip').textContent = t(statusKey);
+  $('lang-select').value = getLang();
+}
+
+$('lang-select').addEventListener('change', (e) => {
+  setLang(e.target.value);
+  try { localStorage.setItem(LANG_KEY, getLang()); } catch { /* ignore */ }
+  applyStatic();
+  fillExamples();
+  renderSettings();
+  analysis.build();
+  analysis.chart.draw();
+  updateEditorMeta();
+  playBtn.setAttribute('aria-label', playing ? t('tr.pause') : t('tr.start'));
+  run(); // warnings and events are generated in the selected language
+});
+
+applyStatic();
 run();
 
 // Används av automatiska tester

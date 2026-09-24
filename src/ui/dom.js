@@ -82,4 +82,4 @@ export function section(title, ...children) {
   return el('div', { class: 'section' }, title ? el('h3', { text: title }) : null, ...children);
 }
 
-export const nf = (v, dec = 0) => Number(v).toLocaleString('sv-SE', { maximumFractionDigits: dec, minimumFractionDigits: dec });
+export { nf } from '../i18n.js';

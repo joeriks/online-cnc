@@ -1,3 +1,5 @@
+import { t } from '../i18n.js';
+
 // Tidsdiagram: spindellast (%) och verklig matning (mm/min).
 
 export class LoadChart {
@@ -63,7 +65,7 @@ export class LoadChart {
     const y1 = 4, y2 = y1 + h1 + gap;
     if (!this.data || !this.data.c.n) {
       g.fillStyle = col.muted;
-      g.fillText('Ingen data – simulera ett program', padL, H / 2);
+      g.fillText(t('chart.empty'), padL, H / 2);
       return;
     }
     const { c, total } = this.data;
@@ -109,7 +111,7 @@ export class LoadChart {
     g.beginPath(); g.moveTo(padL, Math.round(ly(1)) + 0.5); g.lineTo(W - padR, Math.round(ly(1)) + 0.5); g.stroke();
     g.setLineDash([]);
     g.fillStyle = col.ink;
-    g.fillText('Spindellast', padL + 4, y1 + 11);
+    g.fillText(t('chart.load'), padL + 4, y1 + 11);
 
     // Matning
     const fy = (v) => y2 + h2 - (v / maxFeed) * h2;
@@ -130,7 +132,7 @@ export class LoadChart {
     g.fillText(shortNum(maxFeed), 2, y2 + 9);
     g.fillText('0', 2, y2 + h2);
     g.fillStyle = col.ink;
-    g.fillText('Matning mm/min', padL + 4, y2 + 11);
+    g.fillText(t('chart.feed'), padL + 4, y2 + 11);
 
     // Händelser
     for (const e of this.data.events) {

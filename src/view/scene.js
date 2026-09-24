@@ -147,7 +147,7 @@ export class Viewer {
     axes.position.set(z0[0], z0[1], z0[2] + 0.05);
     axes.renderOrder = 5;
     this.machineGroup.add(axes);
-    this.machineGroup.visible = this.showMachine;
+    this.machineGroup.visible = this.showMachine && !this.resultMode;
     this.dirtyRender = true;
   }
 
@@ -160,7 +160,7 @@ export class Viewer {
     const wallCount = 2 * (2 * nx + 2 * ny);
     const pos = new Float32Array((topCount + wallCount) * 3);
     const nor = new Float32Array((topCount + wallCount) * 3);
-    const col = new Float32Array((topCount + wallCount) * 3);
+    const col = new Float32Array((topCount + wallCount) * 4).fill(1); // RGBA: genomgående hål får alfa 0
     this.xs = new Float32Array(nx);
     this.ys = new Float32Array(ny);
     for (let i = 0; i < nx; i++) this.xs[i] = i === 0 ? hm.x0 : i === nx - 1 ? hm.x0 + hm.sx : hm.x0 + (i + 0.5) * hm.dx;
@@ -179,6 +179,7 @@ export class Viewer {
         idx.push(a, b, d, a, d, c);
       }
     }
+    const topIdx = idx.slice();
     // Väggar: fram, bak, vänster, höger – två rader (topp/botten) per kant
     this.walls = [];
     let base = topCount;
@@ -210,17 +211,33 @@ export class Viewer {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute('normal', new THREE.BufferAttribute(nor, 3).setUsage(THREE.DynamicDrawUsage));
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 4).setUsage(THREE.DynamicDrawUsage));
     g.setIndex(idx);
     this.stockMaterial = material;
     const metal = material.group === 'metal';
-    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: metal ? 0.35 : 0.85, metalness: metal ? 0.55 : 0, side: THREE.DoubleSide });
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, alphaTest: 0.5, roughness: metal ? 0.35 : 0.85, metalness: metal ? 0.55 : 0, side: THREE.DoubleSide });
     this.stockMesh = new THREE.Mesh(g, mat);
     this.stockGroup.add(this.stockMesh);
+    // Undersida (syns i resultatläget), med samma hål som ovansidan
+    const bpos = new Float32Array(topCount * 3);
+    const bnor = new Float32Array(topCount * 3);
+    const bcol = new Float32Array(topCount * 4);
+    const under = new THREE.Color(material.color).multiplyScalar(0.8);
+    for (let c = 0; c < topCount; c++) {
+      bpos[c * 3] = pos[c * 3]; bpos[c * 3 + 1] = pos[c * 3 + 1]; bpos[c * 3 + 2] = hm.zBottom - 0.002;
+      bnor[c * 3 + 2] = -1;
+      bcol[c * 4] = under.r; bcol[c * 4 + 1] = under.g; bcol[c * 4 + 2] = under.b; bcol[c * 4 + 3] = 1;
+    }
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.BufferAttribute(bpos, 3));
+    bg.setAttribute('normal', new THREE.BufferAttribute(bnor, 3));
+    bg.setAttribute('color', new THREE.BufferAttribute(bcol, 4).setUsage(THREE.DynamicDrawUsage));
+    bg.setIndex(topIdx);
+    this.bottomMesh = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({ vertexColors: true, alphaTest: 0.5, roughness: 0.9, side: THREE.DoubleSide }));
+    this.stockGroup.add(this.bottomMesh);
     this.colTop = new THREE.Color(material.color);
     this.colCut = new THREE.Color(material.cutColor || material.color);
     this.colDeep = this.colCut.clone().multiplyScalar(0.72);
-    this.colThrough = new THREE.Color((this.palette && this.palette.spoilboard) || '#b89c74').multiplyScalar(0.8);
     hm.dirty = { i0: 0, i1: nx - 1, j0: 0, j1: ny - 1 };
     this.updateStock();
   }
@@ -235,6 +252,8 @@ export class Viewer {
     const pos = g.attributes.position.array;
     const nor = g.attributes.normal.array;
     const col = g.attributes.color.array;
+    const bcol = this.bottomMesh.geometry.attributes.color.array;
+    const through = zBottom + 1e-4;
     const i0 = Math.max(0, d.i0 - 1), i1 = Math.min(nx - 1, d.i1 + 1);
     const j0 = Math.max(0, d.j0 - 1), j1 = Math.min(ny - 1, d.j1 + 1);
     const depthSpan = Math.max(0.5, zTop - zBottom);
@@ -253,9 +272,16 @@ export class Viewer {
         nor[k] = -gx * inv; nor[k + 1] = -gy * inv; nor[k + 2] = inv;
         const depth = zTop - z;
         if (depth < 0.01) tmpColor.copy(this.colTop);
-        else if (z <= zBottom + 1e-4) tmpColor.copy(this.colThrough);
         else tmpColor.copy(this.colCut).lerp(this.colDeep, Math.min(1, depth / depthSpan));
-        col[k] = tmpColor.r; col[k + 1] = tmpColor.g; col[k + 2] = tmpColor.b;
+        // Hål: en genomfräst cell vars alla grannar också är genomfrästa blir osynlig.
+        // Kantcellerna behålls så att hålets väggar ritas hela vägen ner.
+        let open = z <= through;
+        if (open) {
+          for (let jj = jd; jj <= ju && open; jj++) for (let ii = il; ii <= ir; ii++) if (h[jj * nx + ii] > through) { open = false; break; }
+        }
+        const q = c * 4;
+        col[q] = tmpColor.r; col[q + 1] = tmpColor.g; col[q + 2] = tmpColor.b; col[q + 3] = open ? 0 : 1;
+        bcol[q + 3] = open ? 0 : 1;
       }
     }
     // Väggar
@@ -269,14 +295,17 @@ export class Viewer {
           pos[top + 2] = h[j * nx + i];
           pos[bot + 2] = zBottom;
           const ct = zTop - h[j * nx + i] < 0.01 ? this.colTop : this.colCut;
-          col[top] = ct.r * 0.9; col[top + 1] = ct.g * 0.9; col[top + 2] = ct.b * 0.9;
-          col[bot] = ct.r * 0.8; col[bot + 1] = ct.g * 0.8; col[bot + 2] = ct.b * 0.8;
+          const qt = (w.start + k * 2) * 4;
+          const qb = qt + 4;
+          col[qt] = ct.r * 0.9; col[qt + 1] = ct.g * 0.9; col[qt + 2] = ct.b * 0.9; col[qt + 3] = 1;
+          col[qb] = ct.r * 0.8; col[qb + 1] = ct.g * 0.8; col[qb + 2] = ct.b * 0.8; col[qb + 3] = 1;
         }
       }
     }
     g.attributes.position.needsUpdate = true;
     g.attributes.normal.needsUpdate = true;
     g.attributes.color.needsUpdate = true;
+    this.bottomMesh.geometry.attributes.color.needsUpdate = true;
     g.computeBoundingSphere();
     hm.resetDirty();
     this.dirtyRender = true;
@@ -316,7 +345,7 @@ export class Viewer {
     this.pathCount = n;
     gDone.setDrawRange(0, 0);
     this.pathGroup.add(this.pathAll, this.pathDone);
-    this.pathGroup.visible = this.showPaths;
+    this.pathGroup.visible = this.showPaths && !this.resultMode;
     this.applyRapidVisibility();
     this.dirtyRender = true;
   }
@@ -415,16 +444,26 @@ export class Viewer {
     this.dirtyRender = true;
   }
 
+  // Resultatläge: bara den färdiga detaljen – ingen maskin, spindel, bord eller banor.
+  setResultMode(on) {
+    this.resultMode = on;
+    this.machineGroup.visible = on ? false : this.showMachine;
+    this.pathGroup.visible = on ? false : this.showPaths;
+    this.head.visible = !on;
+    if (this.carriage) this.carriage.visible = !on;
+    this.dirtyRender = true;
+  }
+
   setMachineVisible(v) {
     this.showMachine = v;
-    this.machineGroup.visible = v;
+    this.machineGroup.visible = v && !this.resultMode;
     // Bordet ska alltid synas
     this.dirtyRender = true;
   }
 
   setPathsVisible(v) {
     this.showPaths = v;
-    this.pathGroup.visible = v;
+    this.pathGroup.visible = v && !this.resultMode;
     this.dirtyRender = true;
   }
 

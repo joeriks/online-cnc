@@ -194,6 +194,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   max-width: 100%;
 }
 .select-sm { height: 30px; }
+.select-lang { width: auto; font-weight: 600; letter-spacing: 0.04em; }
 
 .status-chip {
   font-family: var(--font-display);
@@ -425,6 +426,7 @@ h3 { font-size: 13px; color: var(--ink-2); }
 .chip.toggle input { accent-color: var(--accent); margin: 0; }
 .chip.small { height: 26px; font-size: 12px; }
 .view-tools .sep { width: 6px; }
+.chip-result[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
 .banner {
   position: absolute;

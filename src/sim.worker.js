@@ -1,7 +1,9 @@
 import { simulate } from './core/simulate.js';
+import { setLang } from './i18n.js';
 
 self.onmessage = (e) => {
-  const { id, code, cfg } = e.data;
+  const { id, code, cfg, lang } = e.data;
+  setLang(lang);
   try {
     const result = simulate(code, cfg, (p) => self.postMessage({ id, progress: p }));
     const c = result.chunks;

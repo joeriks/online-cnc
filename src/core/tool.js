@@ -1,3 +1,5 @@
+import { t, fmt } from '../i18n.js';
+
 // Verktygsgeometri: profilhöjd över spetsen som funktion av radien.
 
 export function toolRadius(t) {
@@ -49,9 +51,9 @@ export function cuttingLength(t) {
   return t.fluteLen;
 }
 
-export function describeTool(t) {
-  const d = t.d.toLocaleString('sv-SE', { maximumFractionDigits: 3 });
-  if (t.type === 'vbit') return `V ${t.angle}° Ø${d}`;
-  if (t.type === 'ball') return `Kula Ø${d}`;
-  return `Ø${d} ${t.flutes}-skärs`;
+export function describeTool(tool) {
+  const d = fmt(tool.d, 3);
+  if (tool.type === 'vbit') return t('tool.v', { a: tool.angle, d });
+  if (tool.type === 'ball') return t('tool.ball', { d });
+  return t('tool.flat', { d, z: tool.flutes });
 }

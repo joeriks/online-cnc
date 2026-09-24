@@ -1,4 +1,10 @@
-// Exempelprogram. Varje exempel anger material, verktyg och ämne.
+// Example programs. Each example specifies material, tools and stock.
+import { getLang } from '../i18n.js';
+
+// Pick the English or Swedish text (G-code comments, names).
+const c = (en, sv) => (getLang() === 'sv' ? sv : en);
+
+export const exampleName = (ex) => ex.name[getLang()] || ex.name.en;
 
 const n = (v) => {
   const s = (Math.round(v * 1000) / 1000).toFixed(3).replace(/\.?0+$/, '');
@@ -6,7 +12,7 @@ const n = (v) => {
 };
 
 function header(lines, title) {
-  lines.push(`(${title})`, 'G21 G90 G17 G94 (mm, absolut, XY-plan, mm/min)', 'G54');
+  lines.push(`(${title})`, c('G21 G90 G17 G94 (mm, absolute, XY plane, mm/min)', 'G21 G90 G17 G94 (mm, absolut, XY-plan, mm/min)'), 'G54');
 }
 
 function rectPocket(L, { x0, y0, x1, y1, depth, doc, r, stepover, feed, plunge }) {
@@ -14,7 +20,7 @@ function rectPocket(L, { x0, y0, x1, y1, depth, doc, r, stepover, feed, plunge }
   for (let p = 1; p <= passes; p++) {
     const z = -Math.min(depth, p * doc);
     const ax = x0 + r, bx = x1 - r, ay = y0 + r, by = y1 - r;
-    L.push(`(Djup ${n(-z)} mm)`);
+    L.push(c(`(Depth ${n(-z)} mm)`, `(Djup ${n(-z)} mm)`));
     L.push(`G0 X${n(ax)} Y${n(ay)}`);
     L.push('G0 Z1');
     L.push(`G1 Z${n(z)} F${plunge}`);
@@ -35,9 +41,9 @@ function rectPocket(L, { x0, y0, x1, y1, depth, doc, r, stepover, feed, plunge }
 
 function pocketPine() {
   const L = [];
-  header(L, 'Rektangulär ficka 60 x 40 x 4,5 mm i furu');
-  L.push('(Verktyg T1: pinnfräs 3,175 mm, 2 skär)');
-  L.push('T1', 'M3 S10000', 'G4 P1 (vänta på att spindeln varvar upp)', 'G0 Z5');
+  header(L, c('Rectangular pocket 60 x 40 x 4.5 mm in pine', 'Rektangulär ficka 60 x 40 x 4,5 mm i furu'));
+  L.push(c('(Tool T1: end mill 3.175 mm, 2 flutes)', '(Verktyg T1: pinnfräs 3,175 mm, 2 skär)'));
+  L.push('T1', 'M3 S10000', c('G4 P1 (wait for the spindle to spin up)', 'G4 P1 (vänta på att spindeln varvar upp)'), 'G0 Z5');
   rectPocket(L, { x0: 20, y0: 15, x1: 80, y1: 55, depth: 4.5, doc: 1.5, r: 3.175 / 2, stepover: 1.3, feed: 1000, plunge: 250 });
   L.push('G0 Z5', 'M5', 'G0 X0 Y0', 'M30');
   return L.join('\n');
@@ -45,8 +51,8 @@ function pocketPine() {
 
 function helixMdf() {
   const L = [];
-  header(L, 'Rund skiva Ø80 med hål Ø20 i 6 mm MDF – helixfräsning med G2');
-  L.push('(Verktyg T1: pinnfräs 3,175 mm, 2 skär. Nollpunkt: ämnets mitt, överkant)');
+  header(L, c('Round disc Ø80 with a Ø20 hole in 6 mm MDF – helical milling with G2', 'Rund skiva Ø80 med hål Ø20 i 6 mm MDF – helixfräsning med G2'));
+  L.push(c('(Tool T1: end mill 3.175 mm, 2 flutes. Zero: center of stock, top)', '(Verktyg T1: pinnfräs 3,175 mm, 2 skär. Nollpunkt: ämnets mitt, överkant)'));
   L.push('T1', 'M3 S10000', 'G4 P1', 'G0 Z5');
   const tr = 3.175 / 2;
   const circle = (R, label) => {
@@ -61,22 +67,22 @@ function helixMdf() {
     L.push(`G2 X${n(R)} Y0 I${n(-R)} J0`);
     L.push('G0 Z5');
   };
-  circle(10 - tr, 'Innerhål Ø20 – verktygets centrum går innanför');
-  circle(40 + tr, 'Ytterkontur Ø80 – verktygets centrum går utanför');
+  circle(10 - tr, c('Inner hole Ø20 – the tool center runs inside', 'Innerhål Ø20 – verktygets centrum går innanför'));
+  circle(40 + tr, c('Outer contour Ø80 – the tool center runs outside', 'Ytterkontur Ø80 – verktygets centrum går utanför'));
   L.push('M5', 'G0 X0 Y0', 'M30');
   return L.join('\n');
 }
 
 function signOak() {
   const L = [];
-  header(L, 'Skylt i ek: kantspår + V-gravyr med verktygsbyte');
-  L.push('(T1: pinnfräs 3,175 mm. T2: V-fräs 60 grader)');
+  header(L, c('Oak sign: border groove + V-carving with a tool change', 'Skylt i ek: kantspår + V-gravyr med verktygsbyte'));
+  L.push(c('(T1: end mill 3.175 mm. T2: V-bit 60 degrees)', '(T1: pinnfräs 3,175 mm. T2: V-fräs 60 grader)'));
   L.push('T1', 'M3 S10000', 'G4 P1', 'G0 Z5');
-  L.push('(Spår runt skylten, 1 mm per varv)');
+  L.push(c('(Groove around the sign, 1 mm per pass)', '(Spår runt skylten, 1 mm per varv)'));
   for (const z of [-1, -2]) {
     L.push('G0 X6 Y6', 'G1 Z' + z + ' F200', 'G1 X114 F700', 'G1 Y54', 'G1 X6', 'G1 Y6', 'G0 Z3');
   }
-  L.push('G0 Z20', 'M5', 'T2 M6 (Byt till V-fräsen och nollställ Z)', 'M3 S10000', 'G4 P1', 'G0 Z5');
+  L.push('G0 Z20', 'M5', c('T2 M6 (Change to the V-bit and re-zero Z)', 'T2 M6 (Byt till V-fräsen och nollställ Z)'), 'M3 S10000', 'G4 P1', 'G0 Z5');
   const depth = -1.2;
   const letterC = (cx, cy) => {
     const r = 12;
@@ -88,7 +94,7 @@ function signOak() {
   const letterN = (x, y) => {
     L.push(`G0 X${n(x)} Y${n(y)}`, `G1 Z${depth} F150`, `G1 Y${n(y + 24)} F600`, `G1 X${n(x + 18)} Y${n(y)}`, `G1 Y${n(y + 24)}`, 'G0 Z2');
   };
-  L.push('(Bokstäver C N C)');
+  L.push(c('(Letters C N C)', '(Bokstäver C N C)'));
   letterC(30, 30);
   letterN(51, 18);
   letterC(90, 30);
@@ -98,8 +104,8 @@ function signOak() {
 
 function aluAggressive() {
   const L = [];
-  header(L, 'Aluminium: för aggressiva skärdata – se vad som händer');
-  L.push('(T1: pinnfräs 3,175 mm 2 skär. 3 mm djupt fullt spår i ett svep på en liten maskin)');
+  header(L, c('Aluminium: settings that are too aggressive – see what happens', 'Aluminium: för aggressiva skärdata – se vad som händer'));
+  L.push(c('(T1: end mill 3.175 mm 2 flutes. 3 mm deep full slot in one pass on a small machine)', '(T1: pinnfräs 3,175 mm 2 skär. 3 mm djupt fullt spår i ett svep på en liten maskin)'));
   L.push('T1', 'M3 S10000', 'G4 P1', 'G0 Z5');
   L.push('G0 X10 Y10', 'G1 Z-3 F200', 'G1 X70 F800', 'G1 Y30', 'G1 X10', 'G0 Z5');
   L.push('M5', 'G0 X0 Y0', 'M30');
@@ -108,8 +114,8 @@ function aluAggressive() {
 
 function aluGentle() {
   const L = [];
-  header(L, 'Aluminium: försiktiga data för en liten maskin');
-  L.push('(T1: O-flute 3,175 mm 1 skär. 0,3 mm skärdjup, låg hastighet, luftblästring)');
+  header(L, c('Aluminium: gentle settings for a small machine', 'Aluminium: försiktiga data för en liten maskin'));
+  L.push(c('(T1: O-flute 3.175 mm 1 flute. 0.3 mm depth of cut, low speed, air blast)', '(T1: O-flute 3,175 mm 1 skär. 0,3 mm skärdjup, låg hastighet, luftblästring)'));
   L.push('T1', 'M3 S10000', 'G4 P1', 'G0 Z5');
   rectPocket(L, { x0: 10, y0: 10, x1: 40, y1: 30, depth: 0.9, doc: 0.3, r: 3.175 / 2, stepover: 1.2, feed: 350, plunge: 60 });
   L.push('M5', 'G0 X0 Y0', 'M30');
@@ -118,8 +124,8 @@ function aluGentle() {
 
 function reliefFoam() {
   const L = [];
-  header(L, '3D-relief, vågyta i PU-skum med kulfräs');
-  L.push('(T1: kulfräs 3,175 mm. Raster längs X, 0,6 mm sidsteg)');
+  header(L, c('3D relief, wave surface in PU foam with a ball nose', '3D-relief, vågyta i PU-skum med kulfräs'));
+  L.push(c('(T1: ball nose 3.175 mm. Raster along X, 0.6 mm stepover)', '(T1: kulfräs 3,175 mm. Raster längs X, 0,6 mm sidsteg)'));
   L.push('T1', 'M3 S10000', 'G4 P1', 'G0 Z5');
   const f = (x, y) => -3 - 2 * Math.sin(x / 7) * Math.cos(y / 9) - 0.6 * Math.cos((x + y) / 5);
   let dir = 1;
@@ -139,19 +145,19 @@ function reliefFoam() {
 
 function mistakes() {
   return [
-    '(Vanliga misstag – kör och läs varningarna)',
+    c('(Common mistakes – run it and read the warnings)', '(Vanliga misstag – kör och läs varningarna)'),
     'G21 G90 G17 G94',
     'G54',
     'T1',
     'G0 X10 Y10 Z2',
-    '(1: ingen G4 – verktyget går in innan spindeln har varvat upp)',
+    c('(1: no G4 – the tool goes in before the spindle is up to speed)', '(1: ingen G4 – verktyget går in innan spindeln har varvat upp)'),
     'M3 S10000',
     'G1 Z-1 F300',
     'G1 X40 F900',
-    '(2: glömt att lyfta – G0 rakt genom materialet)',
+    c('(2: forgot to retract – G0 straight through the material)', '(2: glömt att lyfta – G0 rakt genom materialet)'),
     'G0 X60 Y30',
     'G0 Z5',
-    '(3: fel radie på bågen – GRBL svarar error:34 och avsändaren stannar)',
+    c('(3: wrong arc radius – GRBL replies error:34 and the sender stops)', '(3: fel radie på bågen – GRBL svarar error:34 och avsändaren stannar)'),
     'G0 X20 Y20',
     'G2 X60 Y20 R10 F500',
     'M5',
@@ -161,8 +167,8 @@ function mistakes() {
 
 function surfacing() {
   const L = [];
-  header(L, 'Planfräsning av en björkplywoodskiva med Ø22 planfräs');
-  L.push('(T1: planfräs 22 mm. 0,5 mm djup, 40 % sidsteg. Start utanför ämnet – planfräsen kan inte borra.)');
+  header(L, c('Surfacing a birch plywood board with a Ø22 surfacing bit', 'Planfräsning av en björkplywoodskiva med Ø22 planfräs'));
+  L.push(c('(T1: surfacing bit 22 mm. 0.5 mm deep, 40 % stepover. Starts outside the stock – the bit cannot plunge.)', '(T1: planfräs 22 mm. 0,5 mm djup, 40 % sidsteg. Start utanför ämnet – planfräsen kan inte borra.)'));
   L.push('T1', 'M3 S10000', 'G4 P1', 'G0 Z5', 'G0 X-15 Y2');
   L.push('G1 Z-0.5 F300');
   let y = 2;
@@ -178,12 +184,12 @@ function surfacing() {
 }
 
 export const EXAMPLES = [
-  { id: 'pocket', name: 'Ficka i furu', material: 'pine', tools: { 1: 'f3175-2' }, stock: { sx: 100, sy: 70, sz: 18 }, zero: { xy: 'corner', z: 'top' }, code: pocketPine },
-  { id: 'helix', name: 'Rund skiva i MDF (helix, G2)', material: 'mdf', tools: { 1: 'f3175-2' }, stock: { sx: 100, sy: 100, sz: 6 }, zero: { xy: 'center', z: 'top' }, code: helixMdf },
-  { id: 'sign', name: 'Skylt i ek med verktygsbyte (M6)', material: 'oak', tools: { 1: 'f3175-2', 2: 'v60' }, stock: { sx: 120, sy: 60, sz: 15 }, zero: { xy: 'corner', z: 'top' }, code: signOak },
-  { id: 'relief', name: '3D-relief i PU-skum (kulfräs)', material: 'foam', tools: { 1: 'b3175' }, stock: { sx: 80, sy: 80, sz: 20 }, zero: { xy: 'corner', z: 'top' }, code: reliefFoam },
-  { id: 'surface', name: 'Planfräsning av plywood', material: 'ply', tools: { 1: 'surf22' }, stock: { sx: 100, sy: 100, sz: 18 }, zero: { xy: 'corner', z: 'top' }, code: surfacing },
-  { id: 'alu-gentle', name: 'Aluminium – försiktiga data', material: 'al', tools: { 1: 'f3175-1' }, stock: { sx: 50, sy: 40, sz: 8 }, zero: { xy: 'corner', z: 'top' }, code: aluGentle },
-  { id: 'alu-hard', name: 'Aluminium – för aggressivt', material: 'al', tools: { 1: 'f3175-2' }, stock: { sx: 80, sy: 40, sz: 8 }, zero: { xy: 'corner', z: 'top' }, code: aluAggressive },
-  { id: 'mistakes', name: 'Vanliga misstag', material: 'pine', tools: { 1: 'f3175-2' }, stock: { sx: 80, sy: 50, sz: 18 }, zero: { xy: 'corner', z: 'top' }, code: mistakes },
+  { id: 'pocket', name: { en: 'Pocket in pine', sv: 'Ficka i furu' }, material: 'pine', tools: { 1: 'f3175-2' }, stock: { sx: 100, sy: 70, sz: 18 }, zero: { xy: 'corner', z: 'top' }, code: pocketPine },
+  { id: 'helix', name: { en: 'Round disc in MDF (helix, G2)', sv: 'Rund skiva i MDF (helix, G2)' }, material: 'mdf', tools: { 1: 'f3175-2' }, stock: { sx: 100, sy: 100, sz: 6 }, zero: { xy: 'center', z: 'top' }, code: helixMdf },
+  { id: 'sign', name: { en: 'Oak sign with tool change (M6)', sv: 'Skylt i ek med verktygsbyte (M6)' }, material: 'oak', tools: { 1: 'f3175-2', 2: 'v60' }, stock: { sx: 120, sy: 60, sz: 15 }, zero: { xy: 'corner', z: 'top' }, code: signOak },
+  { id: 'relief', name: { en: '3D relief in PU foam (ball nose)', sv: '3D-relief i PU-skum (kulfräs)' }, material: 'foam', tools: { 1: 'b3175' }, stock: { sx: 80, sy: 80, sz: 20 }, zero: { xy: 'corner', z: 'top' }, code: reliefFoam },
+  { id: 'surface', name: { en: 'Surfacing plywood', sv: 'Planfräsning av plywood' }, material: 'ply', tools: { 1: 'surf22' }, stock: { sx: 100, sy: 100, sz: 18 }, zero: { xy: 'corner', z: 'top' }, code: surfacing },
+  { id: 'alu-gentle', name: { en: 'Aluminium – gentle settings', sv: 'Aluminium – försiktiga data' }, material: 'al', tools: { 1: 'f3175-1' }, stock: { sx: 50, sy: 40, sz: 8 }, zero: { xy: 'corner', z: 'top' }, code: aluGentle },
+  { id: 'alu-hard', name: { en: 'Aluminium – too aggressive', sv: 'Aluminium – för aggressivt' }, material: 'al', tools: { 1: 'f3175-2' }, stock: { sx: 80, sy: 40, sz: 8 }, zero: { xy: 'corner', z: 'top' }, code: aluAggressive },
+  { id: 'mistakes', name: { en: 'Common mistakes', sv: 'Vanliga misstag' }, material: 'pine', tools: { 1: 'f3175-2' }, stock: { sx: 80, sy: 50, sz: 18 }, zero: { xy: 'corner', z: 'top' }, code: mistakes },
 ];

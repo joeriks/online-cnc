@@ -1,6 +1,8 @@
 # Spånsim
 
-Simulator för hobby-CNC med GRBL. Klistra in eller öppna ett G-kodsprogram, välj maskin, verktyg och material, och se hur fräsningen går – innan du kör på riktigt.
+Simulator för hobby-CNC med GRBL. Gränssnittet är på engelska som standard och kan växlas till svenska (EN/SV uppe till höger).
+
+Simulator for hobby CNC machines running GRBL – English by default, Swedish selectable. Klistra in eller öppna ett G-kodsprogram, välj maskin, verktyg och material, och se hur fräsningen går – innan du kör på riktigt.
 
 **Online:** https://joeriks.github.io/online-cnc/
 
@@ -31,6 +33,8 @@ npm run build:single # allt i en enda HTML-fil i dist-single/ (kopieras till spa
 - Materialet modelleras som en höjdkarta där verktygets profil (pinn-, kul-, V- och hörnradiefräs) stämplas längs banan.
 - Skärfysik per banavsnitt: faktiskt ingrepp (ae/ap) från den borttagna volymen, spåntjocklek med spåntunning, specifik skärkraft enligt Kienzle, spindeleffekt mot tillgänglig effekt vid aktuellt varvtal, skärkraft, verktygets utböjning som konsolbalk plus ramens styvhet, och böjspänning mot brottgräns.
 - Konsekvenser: verktyget kan gå av, spindeln kan tvärstanna, och stegmotorer kan tappa steg så att resten av detaljen hamnar förskjuten.
+- Varje varning har ett konkret åtgärdsförslag med siffror (nytt skärdjup, sidsteg, matning, varvtal, utstick eller säker Z-höjd) framräknat ur samma fysikmodell.
+- Resultatläget visar bara den färdiga detaljen, utan maskin, spindel och banor – genomfrästa hål blir riktiga hål.
 - Varningar för tunna/tjocka spån (brännmärken, smältande plast, påkladdning i aluminium), för hög skärhastighet, G0 genom material, skaft i materialet, nedstick med icke centrumskärande verktyg, fräsning i offerskivan med mera – med konkreta förslag på ändrad F eller S.
 
 ## Struktur
@@ -46,5 +50,6 @@ npm run build:single # allt i en enda HTML-fil i dist-single/ (kopieras till spa
 | `src/core/examples.js` | Exempelprogram |
 | `src/view/` | 3D-vy (Three.js) och diagram |
 | `src/ui/` | Editor, inställningar och analyspanel |
+| `src/i18n.js` | Översättningar (engelska/svenska) |
 
 Materialdata och maskinvärden är typiska uppskattningar för hobbyutrustning. Justera dem under Maskin, Verktyg och Material så att de stämmer med din maskin.
