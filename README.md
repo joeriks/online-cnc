@@ -1,6 +1,6 @@
 # Spånsim
 
-Simulator för hobby-CNC med GRBL. Gränssnittet är på engelska som standard och kan växlas till svenska (EN/SV uppe till höger).
+Simulator för hobby-CNC med GRBL. Gränssnittet är på engelska som standard och kan växlas till svenska (EN/SV uppe till höger). Utöver verkstadstemat finns ett alternativt tema i Frutiger Aero-stil (väljaren bredvid språket).
 
 Simulator for hobby CNC machines running GRBL – English by default, Swedish selectable. Klistra in eller öppna ett G-kodsprogram, välj maskin, verktyg och material, och se hur fräsningen går – innan du kör på riktigt.
 

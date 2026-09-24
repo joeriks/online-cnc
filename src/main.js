@@ -16,6 +16,14 @@ import { defaultWorkholding } from './core/workholding.js';
 const $ = (id) => document.getElementById(id);
 const STORE_KEY = 'spansim-state-v1';
 const LANG_KEY = 'spansim-lang';
+const SKIN_KEY = 'spansim-skin';
+
+// Visual theme: the workshop look (default) or a glossy Frutiger Aero look.
+function setSkin(skin) {
+  if (skin === 'aero') document.documentElement.dataset.skin = 'aero';
+  else delete document.documentElement.dataset.skin;
+}
+try { setSkin(localStorage.getItem(SKIN_KEY)); } catch { /* ignore */ }
 
 // English is the default language; the choice is remembered in this browser.
 try { setLang(localStorage.getItem(LANG_KEY) || 'en'); } catch { setLang('en'); }
@@ -86,7 +94,11 @@ const viewer = new Viewer($('viewport'));
 function readPalette() {
   const cs = getComputedStyle(document.documentElement);
   const v = (n) => cs.getPropertyValue(n).trim();
-  viewer.setPalette({ accent: v('--accent'), feed: v('--chart-load'), rapid: v('--warn'), spoilboard: '#b39a73', grid: '#6f5f47', frame: '#a3abb0', carriage: '#3b4348' });
+  viewer.setPalette({
+    accent: v('--accent'), feed: v('--chart-load'), rapid: v('--warn'),
+    spoilboard: v('--3d-bed') || '#b39a73', grid: v('--3d-grid') || '#6f5f47',
+    frame: v('--3d-frame') || '#a3abb0', carriage: v('--3d-carriage') || '#3b4348',
+  });
 }
 readPalette();
 
@@ -527,7 +539,17 @@ function applyStatic() {
   for (const e of document.querySelectorAll('[data-i18n-aria]')) e.setAttribute('aria-label', t(e.dataset.i18nAria));
   $('status-chip').textContent = t(statusKey);
   $('lang-select').value = getLang();
+  $('skin-select').value = document.documentElement.dataset.skin || 'workshop';
 }
+
+$('skin-select').addEventListener('change', (e) => {
+  setSkin(e.target.value);
+  try { localStorage.setItem(SKIN_KEY, e.target.value); } catch { /* ignore */ }
+  readPalette();
+  analysis.chart.draw();
+  renderTools($('tab-tools'), state, ui, settingsChanged);
+  run(); // rebuild the 3D scene with the new colors
+});
 
 $('lang-select').addEventListener('change', (e) => {
   setLang(e.target.value);

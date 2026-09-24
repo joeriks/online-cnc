@@ -7,7 +7,7 @@
     <meta name="description" content="Hobby CNC simulator for GRBL: test G-code with different tools and materials before you cut." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700;6..12,800&display=swap" />
   </head>
   <body>
     <div class="app" id="app">
@@ -36,6 +36,11 @@
             <span data-i18n="app.simulate">Simulate</span>
           </button>
           <span class="status-chip" id="status-chip" data-state="idle" data-i18n="status.idle">Not run</span>
+          <label class="sr-only" for="skin-select" data-i18n="app.skin">Theme</label>
+          <select id="skin-select" class="select select-lang" data-i18n-title="app.skin" title="Theme">
+            <option value="workshop" data-i18n="skin.workshop">Workshop</option>
+            <option value="aero" data-i18n="skin.aero">Aero</option>
+          </select>
           <label class="sr-only" for="lang-select" data-i18n="app.language">Language</label>
           <select id="lang-select" class="select select-lang" title="Language / Språk">
             <option value="en">EN</option>
